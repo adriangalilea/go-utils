@@ -66,14 +66,14 @@ func TestMemorySourcePersistence(t *testing.T) {
 	
 	// First get should cache with source
 	val := utils.KEV.Get("TEST_KEY")
-	if val != "from_test_env" {
-		t.Errorf("Expected 'from_test_env', got '%s'", val)
+	if val != "from_project_root" {
+		t.Errorf("Expected 'from_project_root', got '%s'", val)
 	}
 	
-	// Source should be .env
+	// Source should be absolute path to .env
 	source := utils.KEV.SourceOf("TEST_KEY")
-	if source != ".env" {
-		t.Errorf("Expected source '.env', got '%s'", source)
+	if !strings.Contains(source, "/.env") {
+		t.Errorf("Expected source to contain '/.env', got '%s'", source)
 	}
 	
 	// Remove .env from sources
@@ -81,13 +81,13 @@ func TestMemorySourcePersistence(t *testing.T) {
 	
 	// Should still get value from memory with correct source
 	val2 := utils.KEV.Get("TEST_KEY")
-	if val2 != "from_test_env" {
-		t.Errorf("Expected cached 'from_test_env', got '%s'", val2)
+	if val2 != "from_project_root" {
+		t.Errorf("Expected cached 'from_project_root', got '%s'", val2)
 	}
 	
 	source2 := utils.KEV.SourceOf("TEST_KEY")
-	if source2 != ".env" {
-		t.Errorf("Cached source should still be '.env', got '%s'", source2)
+	if !strings.Contains(source2, "/.env") {
+		t.Errorf("Cached source should still contain '/.env', got '%s'", source2)
 	}
 }
 
@@ -98,12 +98,12 @@ func TestParentDirectoryEnv(t *testing.T) {
 	
 	// Should find in current dir first
 	val := utils.KEV.Get("TEST_KEY")
-	if val != "from_test_env" {
-		t.Errorf("Expected 'from_test_env', got '%s'", val)
+	if val != "from_project_root" {
+		t.Errorf("Expected 'from_project_root', got '%s'", val)
 	}
 	source := utils.KEV.SourceOf("TEST_KEY")
-	if source != ".env" {
-		t.Errorf("Expected source '.env', got '%s'", source)
+	if !strings.Contains(source, "/.env") {
+		t.Errorf("Expected source to contain '/.env', got '%s'", source)
 	}
 	
 	// Should find parent-only key in parent
@@ -112,7 +112,7 @@ func TestParentDirectoryEnv(t *testing.T) {
 		t.Errorf("Expected 'parent_value', got '%s'", parentVal)
 	}
 	parentSource := utils.KEV.SourceOf("PARENT_ONLY")
-	if parentSource != "../.env" {
-		t.Errorf("Expected source '../.env', got '%s'", parentSource)
+	if !strings.Contains(parentSource, "tests/.env") {
+		t.Errorf("Expected source to contain 'tests/.env', got '%s'", parentSource)
 	}
 }

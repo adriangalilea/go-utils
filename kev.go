@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,10 +63,24 @@ import (
 //   KEV.All("os:*")                        // Get all OS vars
 //   KEV.Clear("TEMP_*")                    // Clean up temp vars
 //
+// SOURCE TRACKING & OBSERVABILITY:
+//   value, source := KEV.GetWithSource("API_KEY")  // Returns value + where it came from
+//   source := KEV.SourceOf("API_KEY")              // "/path/to/project/.env"
+//   KEV.Debug = true                                // Shows lookup chain
+//   KEV.Export("backup.env")                        // Includes # from: comments
+//
+// AUTO PROJECT ROOT DISCOVERY:
+//   // Automatically finds project root (go.mod, .git) and adds projectRoot/.env
+//   // No more ../../../.env guessing!
+//   // From any nested directory in your project, KEV finds the root .env
+//   // Local .env still takes precedence for overrides
+//
 // WHY THIS IS POWERFUL:
 //   - Zero config: Works immediately with sensible defaults
+//   - Project aware: Auto-discovers project root .env (no more ../.. hell)
 //   - Test isolation: Remove "os" source for hermetic tests  
 //   - Debug easily: KEV.All("*:*") shows everything, everywhere
+//   - Full observability: Always know where your config came from
 //   - Redis familiar: If you know Redis, you know KEV
 
 // memEntry tracks a cached value and where it came from
@@ -92,9 +107,27 @@ var kev = &kevOps{
 // KEV is the public interface for environment operations
 var KEV = kev
 
-// Initialize Source directly - no init() magic
+// Initialize Source and smart defaults
 var _ = func() bool {
 	KEV.Source = sourceOps{kev: KEV}
+	
+	// TODO: Reconsider this after experimentation
+	// This is NOT best practice - it adds magic behavior
+	// But I wanted the convenience of automatic project .env discovery
+	projectRoot := findProjectRoot()
+	if projectRoot != "" {
+		projectEnv := filepath.Join(projectRoot, ".env")
+		KEV.sources = append(KEV.sources, projectEnv)
+		
+		if KEV.Debug {
+			Log.Info("KEV", "Auto-discovered project root:", projectRoot)
+			Log.Info("KEV", "Added project .env to sources:", projectEnv)
+			Log.Info("KEV", "Default sources:", KEV.sources)
+		}
+	} else if KEV.Debug {
+		Log.Info("KEV", "No project root found, using standard sources:", KEV.sources)
+	}
+	
 	return true
 }()
 
@@ -184,8 +217,15 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 				Log.Info("KEV", "  ✓", source+":", "found", val, "(caching)")
 			}
 			// Cache in memory for next time with source info
+			// Store absolute path for file sources
+			absoluteSource := source
+			if source != "os" && source != "default" && source != "set" {
+				if absPath, err := filepath.Abs(source); err == nil {
+					absoluteSource = absPath
+				}
+			}
 			k.mu.Lock()
-			k.memory[realKey] = memEntry{value: val, source: source}
+			k.memory[realKey] = memEntry{value: val, source: absoluteSource}
 			k.mu.Unlock()
 			return val
 		}
