@@ -75,6 +75,11 @@ import (
 //   // From any nested directory in your project, KEV finds the root .env
 //   // Local .env still takes precedence for overrides
 //
+// TURBOREPO MONOREPO SUPPORT:
+//   // If in a turborepo monorepo, automatically adds monorepoRoot/.env
+//   // Priority: local .env → monorepoRoot/.env → projectRoot/.env → os
+//   // Perfect for shared config across monorepo packages
+//
 // WHY THIS IS POWERFUL:
 //   - Zero config: Works immediately with sensible defaults
 //   - Project aware: Auto-discovers project root .env (no more ../.. hell)
@@ -114,18 +119,41 @@ var _ = func() bool {
 	// TODO: Reconsider this after experimentation
 	// This is NOT best practice - it adds magic behavior
 	// But I wanted the convenience of automatic project .env discovery
+	
+	// Check for monorepo root first (turborepo)
+	monorepoRoot := findMonorepoRoot()
+	if monorepoRoot != "" {
+		// Add monorepo root .env with highest priority (after local .env)
+		monorepoEnv := filepath.Join(monorepoRoot, ".env")
+		KEV.sources = append(KEV.sources, monorepoEnv)
+		
+		if KEV.Debug {
+			Log.Info("KEV", "Auto-discovered monorepo root:", monorepoRoot)
+			Log.Info("KEV", "Added monorepo .env to sources:", monorepoEnv)
+		}
+	}
+	
+	// Then check for project root
 	projectRoot := findProjectRoot()
 	if projectRoot != "" {
 		projectEnv := filepath.Join(projectRoot, ".env")
-		KEV.sources = append(KEV.sources, projectEnv)
-		
-		if KEV.Debug {
-			Log.Info("KEV", "Auto-discovered project root:", projectRoot)
-			Log.Info("KEV", "Added project .env to sources:", projectEnv)
+		// Only add if it's different from monorepo env
+		if monorepoRoot == "" || projectEnv != filepath.Join(monorepoRoot, ".env") {
+			KEV.sources = append(KEV.sources, projectEnv)
+			
+			if KEV.Debug {
+				Log.Info("KEV", "Auto-discovered project root:", projectRoot)
+				Log.Info("KEV", "Added project .env to sources:", projectEnv)
+			}
+		}
+	}
+	
+	if KEV.Debug {
+		if monorepoRoot == "" && projectRoot == "" {
+			Log.Info("KEV", "No project or monorepo root found, using standard sources:", KEV.sources)
+		} else {
 			Log.Info("KEV", "Default sources:", KEV.sources)
 		}
-	} else if KEV.Debug {
-		Log.Info("KEV", "No project root found, using standard sources:", KEV.sources)
 	}
 	
 	return true
