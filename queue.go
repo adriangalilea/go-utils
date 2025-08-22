@@ -30,8 +30,14 @@ Example usage:
 	}()
 	
 	// Enqueue work - duplicates automatically filtered
-	q.TryEnqueue("api.example.com", request1) // true
-	q.TryEnqueue("api.example.com", request2) // false - already queued
+	switch q.TryEnqueue("api.example.com", request1) {
+	case Enqueued:
+		// Successfully queued
+	case AlreadyQueued:
+		// Already being processed
+	case QueueFull:
+		// Need to retry later or increase buffer size
+	}
 
 When to use Queue vs channels:
   - Use Queue when you need automatic deduplication
@@ -64,6 +70,15 @@ const (
 	QueueStateInFlight
 	QueueStateCompleted
 	QueueStateFailed
+)
+
+// EnqueueResult describes the outcome of TryEnqueue
+type EnqueueResult int
+
+const (
+	Enqueued EnqueueResult = iota  // Successfully enqueued
+	AlreadyQueued                   // Item already in queue (pending/in-flight)
+	QueueFull                       // Queue channel is at capacity
 )
 
 func (s QueueState) String() string {
@@ -180,8 +195,8 @@ func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[
 	return q
 }
 
-// TryEnqueue attempts to enqueue work, returns false if already queued/in-flight/queue full
-func (q *Queue[K, V]) TryEnqueue(key K, value V) bool {
+// TryEnqueue attempts to enqueue work, returns why it succeeded or failed
+func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	
@@ -193,7 +208,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) bool {
 		if q.metrics != nil {
 			q.metrics.RecordEnqueue(false)
 		}
-		return false
+		return AlreadyQueued
 	}
 	
 	// Mark as pending BEFORE channel send
@@ -214,7 +229,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) bool {
 		if q.logger != nil {
 			q.logger.Debug("Queue: enqueued item: %v", key)
 		}
-		return true
+		return Enqueued
 	default:
 		// Queue full - rollback the pending mark
 		if oldState == 0 {
@@ -228,7 +243,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) bool {
 		if q.logger != nil {
 			q.logger.Debug("Queue: queue full, cannot enqueue: %v", key)
 		}
-		return false
+		return QueueFull
 	}
 }
 
@@ -237,7 +252,7 @@ func (q *Queue[K, V]) TryEnqueueBatch(items map[K]V) []K {
 	enqueued := make([]K, 0, len(items))
 	
 	for key, value := range items {
-		if q.TryEnqueue(key, value) {
+		if q.TryEnqueue(key, value) == Enqueued {
 			enqueued = append(enqueued, key)
 		}
 	}

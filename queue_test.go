@@ -13,17 +13,17 @@ func TestQueueBasicEnqueueDequeue(t *testing.T) {
 	q := NewQueue[string, int](10)
 	
 	// First enqueue should succeed
-	if !q.TryEnqueue("item1", 100) {
+	if q.TryEnqueue("item1", 100) != Enqueued {
 		t.Fatal("Failed to enqueue first item")
 	}
 	
-	// Duplicate enqueue should fail
-	if q.TryEnqueue("item1", 200) {
-		t.Fatal("Should not allow duplicate enqueue")
+	// Duplicate enqueue should return AlreadyQueued
+	if q.TryEnqueue("item1", 200) != AlreadyQueued {
+		t.Fatal("Should return AlreadyQueued for duplicate")
 	}
 	
 	// Different key should succeed
-	if !q.TryEnqueue("item2", 300) {
+	if q.TryEnqueue("item2", 300) != Enqueued {
 		t.Fatal("Failed to enqueue different item")
 	}
 	
@@ -37,21 +37,21 @@ func TestQueueFullBehavior(t *testing.T) {
 	q := NewQueue[int, string](2) // Small queue
 	
 	// Fill the queue
-	if !q.TryEnqueue(1, "first") {
+	if q.TryEnqueue(1, "first") != Enqueued {
 		t.Fatal("Failed to enqueue first item")
 	}
-	if !q.TryEnqueue(2, "second") {
+	if q.TryEnqueue(2, "second") != Enqueued {
 		t.Fatal("Failed to enqueue second item")
 	}
 	
 	// Queue should be full
-	if q.TryEnqueue(3, "third") {
-		t.Fatal("Should not enqueue when queue is full")
+	if q.TryEnqueue(3, "third") != QueueFull {
+		t.Fatal("Should return QueueFull when queue is full")
 	}
 	
-	// But duplicate should still return false (not enqueue)
-	if q.TryEnqueue(1, "duplicate") {
-		t.Fatal("Should not allow duplicate even when checking queue full")
+	// But duplicate should return AlreadyQueued (not QueueFull)
+	if q.TryEnqueue(1, "duplicate") != AlreadyQueued {
+		t.Fatal("Should return AlreadyQueued for duplicate even when queue is full")
 	}
 }
 
@@ -190,7 +190,7 @@ func TestQueueStateTransitions(t *testing.T) {
 	}
 	
 	// Can re-enqueue after completion
-	if !q.TryEnqueue("test", 43) {
+	if q.TryEnqueue("test", 43) != Enqueued {
 		t.Error("Should be able to re-enqueue completed item")
 	}
 }
@@ -322,7 +322,7 @@ func TestQueueConcurrentEnqueueSameKey(t *testing.T) {
 		wg.Add(1)
 		go func(val int) {
 			defer wg.Done()
-			if q.TryEnqueue("same-key", val) {
+			if q.TryEnqueue("same-key", val) == Enqueued {
 				success.Add(1)
 			}
 		}(i)
