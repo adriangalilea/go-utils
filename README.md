@@ -29,6 +29,14 @@ price := 0.037473  // ETH/BTC
 Format.Currency.Auto(price, "BTC")  // "0.037473 ₿"
 Format.Currency.USD(1234.56)        // "+$1,234.56" (green)
 change := Currency.PercentageChange(100, 115)  // 15.0
+
+// Queue with automatic deduplication
+q := NewQueue[string, Work](100)
+results := q.Process(ctx, 5, func(ctx context.Context, url string, work Work) error {
+    return processWork(url, work)
+})
+q.TryEnqueue("api.com", work1)  // true
+q.TryEnqueue("api.com", work2)  // false - already queued
 ```
 
 Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **ts-utils** (coming), **py-utils** (coming).
@@ -50,3 +58,5 @@ Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 
 [**ip.go**](ip.go): Strong IPv4/IPv6 types that make invalid states unrepresentable - IPv4 (4 bytes), IPv6 (16 bytes), and IP discriminated union. Parse once at boundaries, guaranteed valid internally. No defensive checks needed after construction.
+
+[**queue.go**](queue.go): Thread-safe work queue with automatic deduplication - Queue[K,V] ensures each key is queued at most once until completion. Perfect for API calls, background jobs, and event processing that must run exactly once. Features result channels, retry support, graceful drain, batch operations, and metrics hooks.
