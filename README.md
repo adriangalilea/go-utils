@@ -35,8 +35,15 @@ q := NewQueue[string, Work](100)
 results := q.Process(ctx, 5, func(ctx context.Context, url string, work Work) error {
     return processWork(url, work)
 })
-q.TryEnqueue("api.com", work1)  // true
-q.TryEnqueue("api.com", work2)  // false - already queued
+q.TryEnqueue("api.com", work1)  // Enqueued
+q.TryEnqueue("api.com", work2)  // AlreadyQueued
+
+// Priority queue with fairness guarantees
+pq := NewPriorityQueue[string, Work](10, 100, 2)  // 2:1 ratio
+defer pq.Stop()
+results := pq.Process(ctx, 5, handler)
+pq.TryEnqueue("critical", work, true)   // Priority queue
+pq.TryEnqueue("normal", work, false)    // Normal queue
 ```
 
 Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **ts-utils** (coming), **py-utils** (coming).
@@ -60,3 +67,5 @@ Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **
 [**ip.go**](ip.go): Strong IPv4/IPv6 types that make invalid states unrepresentable - IPv4 (4 bytes), IPv6 (16 bytes), and IP discriminated union. Parse once at boundaries, guaranteed valid internally. No defensive checks needed after construction.
 
 [**queue.go**](queue.go): Thread-safe work queue with automatic deduplication - Queue[K,V] ensures each key is queued at most once until completion. Perfect for API calls, background jobs, and event processing that must run exactly once. Features result channels, retry support, graceful drain, batch operations, and metrics hooks.
+
+[**priority_queue.go**](priority_queue.go): Dual-queue system with fairness guarantees - PriorityQueue[K,V] maintains two permanent queues where priority items never demote. Configurable fairness ratio (e.g., 2:1) ensures normal queue isn't starved. Queue and dispatcher start immediately, multiple Process() calls share same dispatcher. Perfect for tiered service handling, critical infrastructure monitoring, mixed workload processing.
