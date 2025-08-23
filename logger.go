@@ -23,6 +23,7 @@ const (
 type logOps struct {
 	mu       sync.Mutex
 	warnOnce map[string]struct{}
+	context  string // Optional context for context-specific log levels
 }
 
 // Log provides logging operations with level filtering
@@ -30,9 +31,36 @@ var Log = &logOps{
 	warnOnce: make(map[string]struct{}),
 }
 
+// NewLogger creates a logger for a specific context
+// It will check {context}_LOG_LEVEL first, then fall back to LOG_LEVEL
+func NewLogger(context string) *logOps {
+	return &logOps{
+		warnOnce: make(map[string]struct{}),
+		context:  context,
+	}
+}
+
 // getLevel returns the current log level from KEV
+// If logger has a context, checks {context}_LOG_LEVEL first
 func (l *logOps) getLevel() LogLevel {
-	level := strings.ToLower(KEV.Get("LOG_LEVEL", "info"))
+	var level string
+	
+	if l.context != "" {
+		// Check context-specific level first
+		contextKey := l.context + "_LOG_LEVEL"
+		level = KEV.Get(contextKey)
+	}
+	
+	// If no context or context level not set, use general LOG_LEVEL
+	if level == "" {
+		level = KEV.Get("LOG_LEVEL", "info")
+	}
+	
+	return l.parseLevel(strings.ToLower(level))
+}
+
+// parseLevel converts a string to LogLevel
+func (l *logOps) parseLevel(level string) LogLevel {
 	switch level {
 	case "silent":
 		return LogSilent
