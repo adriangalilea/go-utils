@@ -347,7 +347,7 @@ func (pq *PriorityQueue[K, V]) dispatcher() {
 	for {
 		select {
 		case <-pq.dispatcherCtx.Done():
-			fmt.Printf("[Dispatcher] Context done at start of loop, stopping after %d cycles\n", dispatcherCycles)
+			pq.pqLog.Trace("[Dispatcher] Context done at start of loop, stopping after ", dispatcherCycles, " cycles")
 			if pq.logger != nil {
 				pq.logger.Debug("PriorityQueue: dispatcher stopped after %d cycles", dispatcherCycles)
 			}
@@ -356,12 +356,11 @@ func (pq *PriorityQueue[K, V]) dispatcher() {
 		}
 		
 		dispatcherCycles++
-		fmt.Printf("\n[Dispatcher] Starting cycle %d\n", dispatcherCycles)
+		pq.pqLog.Trace("[Dispatcher] Starting cycle ", dispatcherCycles)
 		
 		// Determine what we MUST take for fairness
 		mustTakeNormal := priorityTaken >= pq.fairnessRatio && normalTaken == 0
-		fmt.Printf("[Dispatcher Cycle %d] Fairness check: P=%d N=%d, mustTakeNormal=%v\n", 
-			dispatcherCycles, priorityTaken, normalTaken, mustTakeNormal)
+		pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Fairness check: P=", priorityTaken, " N=", normalTaken, ", mustTakeNormal=", mustTakeNormal)
 		
 		var item priorityQueueItem[K, V]
 		var fromPriority bool
@@ -369,35 +368,35 @@ func (pq *PriorityQueue[K, V]) dispatcher() {
 		
 		if mustTakeNormal {
 			// PREFER normal queue for fairness, but don't block if only priority has items
-			fmt.Printf("[Dispatcher Cycle %d] Preferring normal queue for fairness\n", dispatcherCycles)
+			pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Preferring normal queue for fairness")
 			select {
 			case item = <-pq.normalQueue:
 				fromPriority = false
 				gotItem = true
-				fmt.Printf("[Dispatcher Cycle %d] Got item from normal queue\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from normal queue")
 			case item = <-pq.priorityQueue:
 				// Normal queue empty, take from priority instead
 				fromPriority = true
 				gotItem = true
-				fmt.Printf("[Dispatcher Cycle %d] Normal queue empty, taking from priority queue instead\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Normal queue empty, taking from priority queue instead")
 			case <-pq.dispatcherCtx.Done():
-				fmt.Printf("[Dispatcher Cycle %d] Context done while waiting\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Context done while waiting")
 				return
 			}
 		} else {
 			// Can take from either, prefer priority
-			fmt.Printf("[Dispatcher Cycle %d] Waiting for items from either queue (prefer priority)...\n", dispatcherCycles)
+			pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Waiting for items from either queue (prefer priority)...")
 			select {
 			case item = <-pq.priorityQueue:
 				fromPriority = true
 				gotItem = true
-				fmt.Printf("[Dispatcher Cycle %d] Got item from priority queue\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from priority queue")
 			case item = <-pq.normalQueue:
 				fromPriority = false
 				gotItem = true
-				fmt.Printf("[Dispatcher Cycle %d] Got item from normal queue\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from normal queue")
 			case <-pq.dispatcherCtx.Done():
-				fmt.Printf("[Dispatcher Cycle %d] Context done, stopping dispatcher\n", dispatcherCycles)
+				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Context done, stopping dispatcher")
 				return
 			}
 		}
