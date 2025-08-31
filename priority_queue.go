@@ -127,6 +127,10 @@ type PriorityQueue[K comparable, V any] struct {
 	isPriority  map[K]bool      // Track which queue an item belongs to
 	completedAt map[K]time.Time
 	
+	// Min-wait protection to prevent rapid cycling
+	lastSentToWorker map[K]time.Time  // Track when item was last sent to workers
+	minWait          time.Duration    // Minimum wait between sending same item to workers
+	
 	// Fairness control
 	fairnessRatio int  // e.g., 2 = process 2 priority per 1 normal
 	
@@ -177,16 +181,18 @@ func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRat
 	}
 	
 	pq := &PriorityQueue[K, V]{
-		priorityQueue:  make(chan priorityQueueItem[K, V], prioritySize),
-		normalQueue:    make(chan priorityQueueItem[K, V], normalSize),
-		workChannel:    make(chan priorityWorkItem[K, V], workChannelSize),
-		state:          make(map[K]QueueState),
-		isPriority:     make(map[K]bool),
-		completedAt:    make(map[K]time.Time),
-		fairnessRatio:  fairnessRatio,
-		maxCompleted:   1000, // Default
-		dispatcherDone: make(chan struct{}),
-		pqLog:          NewLogger("PRIORITY_QUEUE"),
+		priorityQueue:    make(chan priorityQueueItem[K, V], prioritySize),
+		normalQueue:      make(chan priorityQueueItem[K, V], normalSize),
+		workChannel:      make(chan priorityWorkItem[K, V], workChannelSize),
+		state:            make(map[K]QueueState),
+		isPriority:       make(map[K]bool),
+		completedAt:      make(map[K]time.Time),
+		lastSentToWorker: make(map[K]time.Time),
+		minWait:          30 * time.Second, // Default 30 seconds min-wait
+		fairnessRatio:    fairnessRatio,
+		maxCompleted:     1000, // Default
+		dispatcherDone:   make(chan struct{}),
+		pqLog:            NewLogger("PRIORITY_QUEUE"),
 	}
 	
 	// Apply options (reuse from queue.go)
@@ -201,6 +207,13 @@ func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRat
 	go pq.dispatcher()
 	
 	return pq
+}
+
+// SetMinWait configures the minimum wait time between processing attempts for the same item
+func (pq *PriorityQueue[K, V]) SetMinWait(duration time.Duration) {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+	pq.minWait = duration
 }
 
 // Stop gracefully shuts down the queue and dispatcher
@@ -454,7 +467,52 @@ func (pq *PriorityQueue[K, V]) dispatcher() {
 				continue
 			}
 			
-			// No skips, send to workers
+			// Check min-wait before sending to workers
+			pq.mu.RLock()
+			lastSent, hasLastSent := pq.lastSentToWorker[item.Key]
+			minWait := pq.minWait
+			pq.mu.RUnlock()
+			
+			if hasLastSent && time.Since(lastSent) < minWait {
+				// Too soon, re-enqueue at back of same queue
+				waitRemaining := minWait - time.Since(lastSent)
+				pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Min-wait active for ", queueName, " item ", item.Key, ", ", waitRemaining.Round(time.Second), " remaining")
+				if pq.logger != nil {
+					pq.logger.Debug("[Cycle ", dispatcherCycles, "] Min-wait active for ", queueName, " item ", item.Key, ", ", waitRemaining.Round(time.Second), " remaining")
+				}
+				
+				// Try non-blocking re-enqueue
+				if fromPriority {
+					select {
+					case pq.priorityQueue <- item:
+						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Re-enqueued ", queueName, " item ", item.Key, " due to min-wait")
+					default:
+						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
+						if pq.logger != nil {
+							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
+						}
+					}
+				} else {
+					select {
+					case pq.normalQueue <- item:
+						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Re-enqueued ", queueName, " item ", item.Key, " due to min-wait")
+					default:
+						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
+						if pq.logger != nil {
+							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
+						}
+					}
+				}
+				// Don't count toward fairness, continue to next item
+				continue
+			}
+			
+			// Min-wait passed (or first time), update last sent time
+			pq.mu.Lock()
+			pq.lastSentToWorker[item.Key] = time.Now()
+			pq.mu.Unlock()
+			
+			// No skips and min-wait passed, send to workers
 			workItem := priorityWorkItem[K, V]{
 				priorityQueueItem: item,
 				fromPriority:      fromPriority,
