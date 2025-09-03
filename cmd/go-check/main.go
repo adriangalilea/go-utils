@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 
+	. "github.com/adriangalilea/go-utils"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,7 @@ var fixCmd = &cobra.Command{
 		ensureTools()
 		runCommand("golangci-lint", "run", "--fix")
 		runCommand("gofmt", "-w", ".")
-		fmt.Println("✅ Fixed what I could")
+		Log.Ready("Fixed what I could")
 	},
 }
 
@@ -42,14 +42,12 @@ func init() {
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	Check(rootCmd.Execute())
 }
 
 func runChecks() {
 	ensureTools()
-	fmt.Println("🔍 Running checks...")
+	Log.Info("🔍 Running checks...")
 
 	failed := false
 	if !runCommand("golangci-lint", "run") {
@@ -60,10 +58,10 @@ func runChecks() {
 	}
 
 	if failed {
-		fmt.Println("❌ Issues found")
+		Log.Error("Issues found")
 		os.Exit(1)
 	}
-	fmt.Println("✅ All good")
+	Log.Ready("All good")
 }
 
 func ensureTools() {
@@ -74,9 +72,9 @@ func ensureTools() {
 
 	for tool, pkg := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
-			fmt.Printf("📦 Installing %s...\n", tool)
+			Log.Wait("📦 Installing", tool)
 			cmd := exec.Command("go", "install", pkg)
-			cmd.Run()
+			Must(cmd.Output()) // Fail loud if install fails
 		}
 	}
 }
