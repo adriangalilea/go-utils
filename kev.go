@@ -427,7 +427,7 @@ func (k *kevOps) hasInNamespace(namespace, key string) bool {
 			if err != nil {
 				return false
 			}
-			defer file.Close()
+			defer func() { Check(file.Close()) }()
 			
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
@@ -541,7 +541,7 @@ func (k *kevOps) parseEnvFile(path, pattern string, result map[string]string, ke
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { Check(file.Close()) }()
 	
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -762,7 +762,7 @@ func (k *kevOps) ClearUnsafe(patterns ...string) {
 			}
 			keys := k.keysFromNamespace("os", keyPattern)
 			for _, key := range keys {
-				os.Unsetenv(key)
+				Check(os.Unsetenv(key))
 			}
 		default:
 			// File namespace - would need to rewrite file
@@ -780,7 +780,7 @@ func (k *kevOps) Unset(keys ...string) {
 			// Namespaced unset
 			switch namespace {
 			case "os":
-				os.Unsetenv(realKey)
+				Check(os.Unsetenv(realKey))
 			default:
 				// File - would need to rewrite file
 				panic(Error("Unsetting from files not yet implemented"))
@@ -971,7 +971,7 @@ func (k *kevOps) getFromFile(path string, key string) string {
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() { Check(file.Close()) }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

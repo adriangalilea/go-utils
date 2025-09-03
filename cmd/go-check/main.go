@@ -4,7 +4,7 @@ import (
 	"os"
 	"os/exec"
 
-	. "github.com/adriangalilea/go-utils"
+	. "github.com/adriangalilea/go-utils" //nolint:staticcheck
 	"github.com/spf13/cobra"
 )
 
@@ -49,10 +49,7 @@ func runChecks() {
 	ensureTools()
 	Log.Info("🔍 Running checks...")
 
-	failed := false
-	if !runCommand("golangci-lint", "run") {
-		failed = true
-	}
+	failed := !runCommand("golangci-lint", "run")
 	if !runCommand("deadcode", "./...") {
 		failed = true
 	}

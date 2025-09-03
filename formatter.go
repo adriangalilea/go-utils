@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sync"
 	
 	"github.com/charmbracelet/lipgloss"
 )
@@ -53,7 +52,6 @@ type Config struct {
 
 // formatOps handles all formatting operations
 type formatOps struct {
-	mu           sync.Mutex
 	config       Config
 	colorEnabled bool
 }

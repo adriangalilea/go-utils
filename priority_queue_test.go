@@ -49,10 +49,10 @@ func TestPriorityQueueFairness(t *testing.T) {
 	
 	// Add many items to both queues to ensure continuous work
 	for i := 0; i < 50; i++ {
-		pq.MustEnqueue(ctx, fmt.Sprintf("p%d", i), i, true)  // Priority
+		_ = pq.MustEnqueue(ctx, fmt.Sprintf("p%d", i), i, true)  // Priority
 	}
 	for i := 0; i < 50; i++ {
-		pq.MustEnqueue(ctx, fmt.Sprintf("n%d", i), i, false) // Normal
+		_ = pq.MustEnqueue(ctx, fmt.Sprintf("n%d", i), i, false) // Normal
 	}
 	
 	// Track processing order
@@ -151,7 +151,7 @@ func TestPriorityQueueNoStarvation(t *testing.T) {
 	
 	// Add a few normal items
 	for i := 0; i < 5; i++ {
-		pq.MustEnqueue(ctx, fmt.Sprintf("n%d", i), i, false)
+		_ = pq.MustEnqueue(ctx, fmt.Sprintf("n%d", i), i, false)
 	}
 	
 	normalProcessed := atomic.Int32{}
