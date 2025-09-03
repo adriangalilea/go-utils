@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"strings"
 
 	. "github.com/adriangalilea/go-utils" //nolint:staticcheck
 	"github.com/spf13/cobra"
@@ -30,15 +31,61 @@ var fixCmd = &cobra.Command{
 
 var deadCmd = &cobra.Command{
 	Use:   "dead",
-	Short: "Find dead code only",
+	Short: "Find dead code (shows all for libraries)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureTools()
+		Log.Info("🔍 Running deadcode...")
+		Log.Info("Note: In libraries, exported functions will show as 'unreachable'")
+		Log.Info("Look for unexported functions - those might be truly dead")
+		Log.Info("")
 		runCommand("deadcode", "./...")
 	},
 }
 
+var internalCmd = &cobra.Command{
+	Use:   "internal",
+	Short: "Check for unused unexported functions",
+	Run: func(cmd *cobra.Command, args []string) {
+		ensureTools()
+		Log.Info("🔍 Checking for unused unexported functions...")
+		Log.Info("These are more likely to be truly dead code:")
+		Log.Info("")
+		
+		// Run deadcode and filter for unexported functions
+		cmd := exec.Command("deadcode", "./...")
+		output, _ := cmd.Output()
+		
+		lines := strings.Split(string(output), "\n")
+		hasDeadCode := false
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			// Check if it's an unexported function (starts with lowercase after last .)
+			parts := strings.Split(line, " ")
+			if len(parts) > 2 && strings.Contains(parts[2], "func:") {
+				funcName := strings.TrimPrefix(parts[2], "func: ")
+				lastDot := strings.LastIndex(funcName, ".")
+				if lastDot != -1 && lastDot < len(funcName)-1 {
+					firstChar := funcName[lastDot+1]
+					if firstChar >= 'a' && firstChar <= 'z' {
+						Log.Warn(line)
+						hasDeadCode = true
+					}
+				}
+			}
+		}
+		
+		if !hasDeadCode {
+			Log.Ready("✅ No dead unexported functions found")
+		} else {
+			Log.Error("Found potentially dead unexported functions")
+		}
+	},
+}
+
 func init() {
-	rootCmd.AddCommand(fixCmd, deadCmd)
+	rootCmd.AddCommand(fixCmd, deadCmd, internalCmd)
 }
 
 func main() {
@@ -47,18 +94,23 @@ func main() {
 
 func runChecks() {
 	ensureTools()
-	Log.Info("🔍 Running checks...")
-
-	failed := !runCommand("golangci-lint", "run")
-	if !runCommand("deadcode", "./...") {
-		failed = true
-	}
-
-	if failed {
-		Log.Error("Issues found")
+	
+	Log.Info("🔍 Running golangci-lint...")
+	linterFailed := !runCommand("golangci-lint", "run")
+	
+	Log.Info("")
+	Log.Info("🔍 Running deadcode...")
+	Log.Info("(Note: Public APIs will show as 'unreachable' - this is expected for libraries)")
+	deadFailed := !runCommand("deadcode", "./...")
+	
+	if linterFailed || deadFailed {
+		Log.Error("")
+		Log.Error("❌ Issues found")
 		os.Exit(1)
 	}
-	Log.Ready("All good")
+	
+	Log.Info("")
+	Log.Ready("✅ All checks passed")
 }
 
 func ensureTools() {
