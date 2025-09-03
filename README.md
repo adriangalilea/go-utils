@@ -5,7 +5,7 @@ Offensive programming utilities for Go. Fail fast, fail loud, no error recovery.
 `go get github.com/adriangalilea/go-utils`
 
 ```go
-import . "github.com/adriangalilea/go-utils"
+import . "github.com/adriangalilea/go-utils" //nolint:staticcheck
 
 // Offensive programming - fail loud
 config := Must(LoadConfig("config.json"))
