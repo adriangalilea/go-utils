@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	. "github.com/adriangalilea/go-utils" //nolint:staticcheck
@@ -23,6 +25,11 @@ var fixCmd = &cobra.Command{
 	Short: "Auto-fix issues",
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureTools()
+		
+		// First fix go-utils dot import issues
+		fixGoUtilsImports()
+		
+		// Then run standard fixes
 		runCommand("golangci-lint", "run", "--fix")
 		runCommand("gofmt", "-w", ".")
 		Log.Ready("Fixed what I could")
@@ -95,6 +102,15 @@ func main() {
 func runChecks() {
 	ensureTools()
 	
+	// Check for go-utils import issues first
+	Log.Info("🔍 Checking go-utils imports...")
+	goUtilsIssues := checkGoUtilsImports()
+	if goUtilsIssues {
+		Log.Info("")
+		Log.Info("Tip: Run 'go-check fix' to automatically add //nolint:staticcheck")
+	}
+	
+	Log.Info("")
 	Log.Info("🔍 Running golangci-lint...")
 	linterFailed := !runCommand("golangci-lint", "run")
 	
@@ -103,7 +119,7 @@ func runChecks() {
 	Log.Info("(Note: Public APIs will show as 'unreachable' - this is expected for libraries)")
 	deadFailed := !runCommand("deadcode", "./...")
 	
-	if linterFailed || deadFailed {
+	if goUtilsIssues || linterFailed || deadFailed {
 		Log.Error("")
 		Log.Error("❌ Issues found")
 		os.Exit(1)
@@ -133,4 +149,88 @@ func runCommand(name string, args ...string) bool {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run() == nil
+}
+
+// checkGoUtilsImports checks for dot imports of go-utils without nolint
+func checkGoUtilsImports() bool {
+	hasIssues := false
+	
+	// Find all .go files
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		
+		// Skip vendor and .git directories
+		if strings.Contains(path, "vendor/") || strings.Contains(path, ".git/") {
+			return nil
+		}
+		
+		if strings.HasSuffix(path, ".go") {
+			file, err := os.Open(path)
+			if err != nil {
+				return nil
+			}
+			defer func() { Check(file.Close()) }()
+			
+			scanner := bufio.NewScanner(file)
+			lineNum := 0
+			for scanner.Scan() {
+				lineNum++
+				line := scanner.Text()
+				
+				// Check for dot import of go-utils without nolint
+				if strings.Contains(line, `. "github.com/adriangalilea/go-utils"`) &&
+					!strings.Contains(line, "//nolint") {
+					Log.Warn(path + ":" + String(lineNum) + ": dot import of go-utils without //nolint:staticcheck")
+					Log.Info("  Fix: Add '//nolint:staticcheck' to the import line")
+					hasIssues = true
+				}
+			}
+		}
+		return nil
+	})
+	
+	Check(err)
+	return hasIssues
+}
+
+// fixGoUtilsImports automatically adds nolint to go-utils dot imports
+func fixGoUtilsImports() {
+	fixedCount := 0
+	
+	// Find all .go files
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		
+		// Skip vendor and .git directories
+		if strings.Contains(path, "vendor/") || strings.Contains(path, ".git/") {
+			return nil
+		}
+		
+		if strings.HasSuffix(path, ".go") {
+			data := File.Read(path)
+			content := string(data)
+			
+			// Fix dot imports without nolint
+			oldImport := `. "github.com/adriangalilea/go-utils"`
+			newImport := `. "github.com/adriangalilea/go-utils" //nolint:staticcheck`
+			
+			if strings.Contains(content, oldImport) && !strings.Contains(content, "//nolint") {
+				newContent := strings.Replace(content, oldImport, newImport, -1)
+				File.Write(path, []byte(newContent))
+				Log.Info("Fixed:", path)
+				fixedCount++
+			}
+		}
+		return nil
+	})
+	
+	Check(err)
+	
+	if fixedCount > 0 {
+		Log.Ready("Fixed", fixedCount, "go-utils import(s)")
+	}
 }
