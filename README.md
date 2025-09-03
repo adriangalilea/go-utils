@@ -70,3 +70,22 @@ Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **
 [**queue.go**](queue.go): Thread-safe work queue with automatic deduplication - Queue[K,V] ensures each key is queued at most once until completion. Perfect for API calls, background jobs, and event processing that must run exactly once. Features result channels, retry support, graceful drain, batch operations, and metrics hooks.
 
 [**priority_queue.go**](priority_queue.go): Dual-queue system with fairness guarantees and built-in skip-based backoff - PriorityQueue[K,V] maintains two permanent queues where priority items never demote. Features linear backoff via skip counts (items with skipCount > 0 are decremented and re-enqueued). Configurable fairness ratio (e.g., 2:1) ensures normal queue isn't starved. Queue and dispatcher start immediately, multiple Process() calls share same dispatcher. Perfect for connection retry logic, tiered service handling, critical infrastructure monitoring.
+
+## CLI Tools
+
+### go-check
+
+Code quality checker with auto-fix and dead code detection.
+
+```bash
+# Install
+go install github.com/adriangalilea/go-utils/cmd/go-check@latest
+
+# Usage
+go-check          # Run all checks (default)
+go-check fix      # Auto-fix issues  
+go-check dead     # Find dead code only
+go-check --help   # Show help
+```
+
+Auto-installs `golangci-lint` and `deadcode` on first run.
