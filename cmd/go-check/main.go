@@ -52,8 +52,8 @@ var internalCmd = &cobra.Command{
 		Log.Info("")
 		
 		// Run deadcode and filter for unexported functions
-		cmd := exec.Command("deadcode", "./...")
-		output, _ := cmd.Output()
+		deadcodeCmd := exec.Command("deadcode", "./...")
+		output, _ := deadcodeCmd.Output()
 		
 		lines := strings.Split(string(output), "\n")
 		hasDeadCode := false
