@@ -47,17 +47,17 @@ pq.TryEnqueue("normal", work, false)       // Normal queue
 pq.TryEnqueue("retry", work, true, failures)  // With linear backoff (skip 'failures' times)
 ```
 
-Part of the utils suite by Adrian Galilea. Planned: **go-utils** (available), **ts-utils** (coming), **py-utils** (coming).
+Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **py-utils**.
 
 ## Files
 
 [**kev.go**](kev.go): Redis-style KV store for environment variables with namespace support (os:KEY, .env:KEY), memory caching, source fallback chains, pattern matching, and type conversions. Future: memory encryption and .kenv format.
 
-[**offensive.go**](offensive.go): Core offensive programming primitives - Assert() for invariants, Must() for operations that shouldn't fail, Check() for expected runtime errors. The antithesis of defensive programming.
+[**offensive.go**](offensive.go): Offensive programming primitives — Assert(), Must(), Check(). All panic with `*Panic` type instead of `os.Exit(1)`: full stack traces, testable via `recover()`, distinguishable from runtime errors at catch boundaries.
 
-[**file.go**](file.go): File operations that exit on error - Read(), Write(), Open(), Create(), Exists(), Remove(), Copy(). No error returns, just results or death.
+[**file.go**](file.go): File operations that panic on error — Read(), Write(), Open(), Create(), Exists(), Remove(), Copy(). No error returns, just results or death.
 
-[**dir.go**](dir.go): Directory operations that exit on error - Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, no error handling.
+[**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, no error handling.
 
 [**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Event(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
 

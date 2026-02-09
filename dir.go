@@ -7,10 +7,10 @@ import (
 
 type dirOps struct{}
 
-// Dir provides directory operations that exit on error
+// Dir provides directory operations that panic on error
 var Dir = dirOps{}
 
-// Create creates a directory (including parents) and exits on error
+// Create creates a directory (including parents). Panics on error.
 func (dirOps) Create(path string) {
 	err := os.MkdirAll(path, 0755)
 	Check(err)
@@ -25,13 +25,13 @@ func (dirOps) Exists(path string) bool {
 	return info.IsDir()
 }
 
-// Remove removes a directory and all its contents, exits on error
+// Remove removes a directory and all its contents. Panics on error.
 func (dirOps) Remove(path string) {
 	err := os.RemoveAll(path)
 	Check(err)
 }
 
-// List returns all entries in a directory, exits on error
+// List returns all entries in a directory. Panics on error.
 func (dirOps) List(path string) []string {
 	entries, err := os.ReadDir(path)
 	Check(err)
@@ -53,7 +53,7 @@ func (d dirOps) ListFull(path string) []string {
 	return paths
 }
 
-// Copy copies a directory recursively, exits on error
+// Copy copies a directory recursively. Panics on error.
 func (d dirOps) Copy(src, dst string) {
 	d.Create(dst)
 	
@@ -70,14 +70,14 @@ func (d dirOps) Copy(src, dst string) {
 	}
 }
 
-// Current returns the current working directory, exits on error
+// Current returns the current working directory. Panics on error.
 func (dirOps) Current() string {
 	dir, err := os.Getwd()
 	Check(err)
 	return dir
 }
 
-// Change changes the current working directory, exits on error
+// Change changes the current working directory. Panics on error.
 func (dirOps) Change(path string) {
 	err := os.Chdir(path)
 	Check(err)
