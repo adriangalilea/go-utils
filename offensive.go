@@ -12,10 +12,12 @@ import (
 // panic(), always. An uncaught panic crashes the process with a full stack trace.
 // Zero external dependencies. Testable via recover().
 //
-// Three primitives:
+// Five primitives:
 //   Assert(cond, ...msg)       - invariant checking
 //   Must[T](val, err) T        - unwrap (value, error) pairs
 //   Check(err, ...msg)         - check error-only returns
+//   Deref[T](ptr, fallback) T  - unwrap pointer or use fallback (messy world boundary)
+//   Ptr[T](val) *T             - address-of literal (construct optional fields)
 //
 // All panic with Panic type — distinguishes bugs from runtime errors:
 //
@@ -96,4 +98,28 @@ func Check(err error, messages ...string) {
 		}
 		panic(&Panic{Message: message})
 	}
+}
+
+// Deref returns the value behind a pointer, or fallback if nil.
+// For dealing with optional fields from JSON, API responses, etc.
+//
+// Examples:
+//
+//	temp := Deref(weather.Temperature, 0.0)
+//	name := Deref(user.DisplayName, "anonymous")
+func Deref[T any](ptr *T, fallback T) T {
+	if ptr != nil {
+		return *ptr
+	}
+	return fallback
+}
+
+// Ptr returns a pointer to the given value.
+// Go can't take the address of a literal — this fixes that.
+//
+// Examples:
+//
+//	req := &Request{Limit: Ptr(10), Name: Ptr("test")}
+func Ptr[T any](val T) *T {
+	return &val
 }

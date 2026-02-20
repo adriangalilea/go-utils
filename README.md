@@ -53,11 +53,61 @@ Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://gi
 
 [**kev.go**](kev.go): Redis-style KV store for environment variables with namespace support (os:KEY, .env:KEY), memory caching, source fallback chains, pattern matching, and type conversions. Future: memory encryption and .kenv format.
 
-[**offensive.go**](offensive.go): Offensive programming primitives — Assert(), Must(), Check(). All panic with `*Panic` type instead of `os.Exit(1)`: full stack traces, testable via `recover()`, distinguishable from runtime errors at catch boundaries.
+[**offensive.go**](offensive.go): Offensive programming primitives. All panic with `*Panic` type instead of `os.Exit(1)`: full stack traces, testable via `recover()`, distinguishable from runtime errors at catch boundaries.
 
-[**file.go**](file.go): File operations that panic on error — Read(), Write(), Open(), Create(), Exists(), Remove(), Copy(). No error returns, just results or death.
+```go
+// Assert — invariant checking
+// before:
+if port <= 0 || port >= 65536 {
+    log.Fatalf("invalid port: %d", port)
+}
 
-[**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, no error handling.
+// after:
+Assert(port > 0 && port < 65536, "invalid port:", port)
+
+// Must — unwrap (value, error) pairs
+// before:
+tmpl, err := template.New("").Parse(`Hello {{.Name}}`)
+if err != nil {
+    log.Fatal(err)
+}
+
+// after:
+tmpl := Must(template.New("").Parse(`Hello {{.Name}}`))
+
+// Check — check error-only returns
+// before:
+err := os.WriteFile(path, data, 0644)
+if err != nil {
+    log.Fatal(err)
+}
+
+// after:
+Check(os.WriteFile(path, data, 0644))
+
+// Deref — read optional pointer fields (messy world boundary)
+// before:
+name := "unknown"
+if cur.Location.Name != nil {
+    name = *cur.Location.Name
+}
+fmt.Printf("weather in %s\n", name)
+
+// after:
+fmt.Printf("weather in %s\n", Deref(cur.Location.Name, "unknown"))
+
+// Ptr — construct optional pointer fields (can't take address of literals in Go)
+// before:
+limit := 10
+req := &SearchParams{Limit: &limit}
+
+// after:
+req := &SearchParams{Limit: Ptr(10)}
+```
+
+[**file.go**](file.go): File operations that panic on error — Read(), Write(), Open(), Create(), Exists(), Remove(), Copy(). No error returns, panics with `*Panic` via Check().
+
+[**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, panics with `*Panic` via Check().
 
 [**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Event(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
 
