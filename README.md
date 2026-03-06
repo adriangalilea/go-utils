@@ -24,6 +24,12 @@ KEV.Set("os:DEBUG", "true")       // write to OS env
 data := File.Read("data.json")
 File.Write("output.txt", processed)
 
+// XDG Base Directories
+XDG.State("notify")                    // ~/.local/state/notify
+XDG.State("notify", "watchers.json")   // ~/.local/state/notify/watchers.json
+XDG.Config("myapp")                    // ~/.config/myapp
+Dir.Create(XDG.State("notify"))        // Ensure the directory exists
+
 // Currency formatting with intelligent decimals
 price := 0.037473  // ETH/BTC
 Format.Currency.Auto(price, "BTC")  // "0.037473 ₿"
@@ -114,6 +120,8 @@ req := &SearchParams{Limit: Ptr(10)}
 [**logger.go**](logger.go): Log namespace with level filtering via KEV.Get("LOG_LEVEL") - Error(), Warn(), Info(), Event(), Wait(), Ready(), Debug(), Trace(). Includes WarnOnce() for stateful warning deduplication.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
+
+[**xdg.go**](xdg.go): XDG Base Directory paths — reads env vars set by [xdg-dirs](https://github.com/adriangalilea/xdg-dirs), falls back to spec defaults. Variadic path segments for clean composition with Dir.Create().
 
 [**ip.go**](ip.go): Strong IPv4/IPv6 types that make invalid states unrepresentable - IPv4 (4 bytes), IPv6 (16 bytes), and IP discriminated union. Parse once at boundaries, guaranteed valid internally. No defensive checks needed after construction.
 
