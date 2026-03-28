@@ -1,6 +1,6 @@
 # go-utils
 
-Offensive programming utilities for Go. Fail fast, fail loud, no error recovery. A confused program should scream. Includes Redis-style environment KV store, file/directory operations with panic-on-error semantics, and TUI formatting helpers.
+Offensive programming utilities for Go. Fail fast, fail loud, no error recovery. A confused program should scream. Includes Redis-style environment KV store, file/directory operations with panic-on-error semantics, persistent dedup filter, and TUI formatting helpers.
 
 `go get github.com/adriangalilea/go-utils`
 
@@ -43,6 +43,10 @@ results := q.Process(ctx, 5, func(ctx context.Context, url string, work Work) er
 })
 q.TryEnqueue("api.com", work1)  // Enqueued
 q.TryEnqueue("api.com", work2)  // AlreadyQueued
+
+// Persistent dedup — only process new items
+fresh := Unseen("orders", orders, func(o Order) string { return o.ID })
+// 1st run: 5 orders → 5. 2nd run: same 5 → 0. 3rd run: 7 → 2.
 
 // Priority queue with fairness and built-in backoff
 pq := NewPriorityQueue[string, Work](10, 100, 2)  // 2:1 ratio
@@ -120,6 +124,8 @@ req := &SearchParams{Limit: Ptr(10)}
 [**logger.go**](logger.go): Log namespace with level filtering via KEV.Get("LOG_LEVEL") - Error(), Warn(), Info(), Event(), Wait(), Ready(), Debug(), Trace(). Includes WarnOnce() for stateful warning deduplication.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
+
+[**unseen.go**](unseen.go): Persistent dedup filter — "what's new since last time?" Generic `Unseen[T]()` filters items to only those not previously seen for a given namespace. State persists at `~/.local/state/unseen/{namespace}.json`. Makes any script idempotent — safe to run on any schedule without double-processing.
 
 [**xdg.go**](xdg.go): XDG Base Directory paths — reads env vars set by [xdg-dirs](https://github.com/adriangalilea/xdg-dirs), falls back to spec defaults. Variadic path segments for clean composition with Dir.Create().
 
