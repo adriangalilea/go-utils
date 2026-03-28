@@ -44,9 +44,9 @@ results := q.Process(ctx, 5, func(ctx context.Context, url string, work Work) er
 q.TryEnqueue("api.com", work1)  // Enqueued
 q.TryEnqueue("api.com", work2)  // AlreadyQueued
 
-// Dedup — only process items you haven't seen before
+// "What's new since last time?"
 messages := fetchMessages()
-fresh := Unseen("messages", messages, func(m Message) string { return m.ID })
+newMessages := Unseen("messages", messages, func(m Message) string { return m.ID })
 
 // Priority queue with fairness and built-in backoff
 pq := NewPriorityQueue[string, Work](10, 100, 2)  // 2:1 ratio
@@ -125,7 +125,7 @@ req := &SearchParams{Limit: Ptr(10)}
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 
-[**unseen.go**](unseen.go): Filters a slice of structs to only the ones you haven't seen before. Remembers across runs. State: `$XDG_STATE_HOME/unseen/{namespace}.json`.
+[**unseen.go**](unseen.go): "What's new since last time?" — filters a slice of structs to only the ones you haven't seen before. Remembers across runs. Idempotent — safe to re-run. State: `$XDG_STATE_HOME/unseen/{namespace}.json`.
 
 [**xdg.go**](xdg.go): XDG Base Directory paths — reads env vars set by [xdg-dirs](https://github.com/adriangalilea/xdg-dirs), falls back to spec defaults. Variadic path segments for clean composition with Dir.Create().
 
