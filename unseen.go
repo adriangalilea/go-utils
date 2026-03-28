@@ -1,21 +1,11 @@
-// Persistent dedup filter — "what's new since last time?"
+// Filters a slice of structs to only the ones you haven't seen before.
+// Remembers across runs. Safe to re-run on any schedule.
 //
-// Makes any script idempotent. Run it once or a thousand times,
-// you only process each item once. Any scheduling works:
-// manual, cron, a loop, whatever.
+//	messages := fetchMessages()
+//	fresh := Unseen("messages", messages, func(m Message) string { return m.ID })
+//	// First run → all messages. Second run → only new ones.
 //
-//	1st run: 5 orders exist  → returns 5
-//	2nd run: same 5 orders   → returns 0
-//	3rd run: 7 orders exist  → returns 2
-//
-// Usage:
-//
-//	fresh := Unseen("orders", orders, func(o Order) string { return o.ID })
-//	for _, o := range fresh {
-//	    notify(o.Summary)
-//	}
-//
-// State persists at ~/.local/state/unseen/{namespace}.json
+// State: $XDG_STATE_HOME/unseen/{namespace}.json
 package utils
 
 import (
