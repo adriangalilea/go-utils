@@ -4,15 +4,18 @@
 //	messages := fetchMessages()
 //	newMessages := Unseen("messages", messages, func(m Message) string { return m.ID })
 //
-//	// 1st run: messages = [{ID: "1", From: "alice"}, {ID: "2", From: "bob"}]
-//	//          newMessages = [{ID: "1", From: "alice"}, {ID: "2", From: "bob"}]
-//	// 2nd run: messages = [{ID: "1", From: "alice"}, {ID: "2", From: "bob"}]
-//	//          newMessages = []
-//	// 3rd run: messages = [{ID: "1", ...}, {ID: "2", ...}, {ID: "3", From: "bob"}]
-//	//          newMessages = [{ID: "3", From: "bob"}]
+//	1st run:
+//	  messages    = [{ID: "1", From: "alice", Text: "hi"}]
+//	  newMessages = [{ID: "1", From: "alice", Text: "hi"}]
 //
-// Idempotent — safe to re-run.
-// State: $XDG_STATE_HOME/unseen/{namespace}.json
+//	2nd run, no new message:
+//	  newMessages = []
+//
+//	3rd run, bob replied:
+//	  messages    = [{ID: "1", ...}, {ID: "2", From: "bob", Text: "hey"}]
+//	  newMessages = [{ID: "2", From: "bob", Text: "hey"}]
+//
+// Saves state to: $XDG_STATE_HOME/unseen/{namespace}.json
 package utils
 
 import (
