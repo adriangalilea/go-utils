@@ -28,8 +28,8 @@ var unseenDir = XDG.State("unseen")
 // Unseen filters items to only those not seen before for the given namespace.
 // key extracts a unique string identifier from each item.
 func Unseen[T any](namespace string, items []T, key func(T) string) []T {
-	Dir.Create(unseenDir)
 	storePath := filepath.Join(unseenDir, namespace+".json")
+	Dir.Create(filepath.Dir(storePath))
 
 	var keys []string
 	if File.Exists(storePath) {
