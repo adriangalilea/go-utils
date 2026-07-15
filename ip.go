@@ -179,7 +179,7 @@ func (ipNamespace) FromBytes(b []byte, version ...Version) (IPAddr, error) {
 // 4 byte parameters = IPv4, 8 uint16 parameters = IPv6.
 // Optionally specify version to assert the IP is that version.
 // Returns error if invalid number of parts or values out of range.
-func (ipNamespace) New(parts ...interface{}) (IPAddr, error) {
+func (ipNamespace) New(parts ...any) (IPAddr, error) {
 	// Check if last parameter is a Version
 	var version *Version
 	ipParts := parts

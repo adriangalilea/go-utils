@@ -184,8 +184,9 @@ func parseKey(key string) (namespace, k string) {
 func (k *kevOps) Get(key string, defaultValue ...string) string {
 	namespace, realKey := parseKey(key)
 
-	// Centralized debug flag - avoid infinite recursion with LOG_LEVEL
-	debug := k.Debug && key != "LOG_LEVEL"
+	// Centralized debug flag - log level lookups themselves must never be
+	// debug-logged or every log line would recurse through here
+	debug := k.Debug && !strings.HasSuffix(key, "LOG_LEVEL")
 
 	if debug {
 		Log.Info("KEV", "Looking for", key)
@@ -806,6 +807,25 @@ func (k *kevOps) Bool(key string, defaultValue bool) bool {
 	default:
 		panic(&Panic{Message: String("invalid bool value for", key, ":", val)})
 	}
+}
+
+// Float returns environment variable as float64 with default.
+// Panics on invalid format (offensive programming - fail loud on bad data).
+//
+// Example:
+//
+//	threshold := KEV.Float("ALERT_THRESHOLD", 0.95)
+func (k *kevOps) Float(key string, defaultValue float64) float64 {
+	val := k.Get(key)
+	if val == "" {
+		return defaultValue
+	}
+
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		panic(&Panic{Message: String("invalid float value for", key, ":", val)})
+	}
+	return f
 }
 
 // Duration returns environment variable as time.Duration with default

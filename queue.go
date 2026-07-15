@@ -56,7 +56,7 @@ package utils
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -80,7 +80,29 @@ const (
 	Enqueued      EnqueueResult = iota // Successfully enqueued
 	AlreadyQueued                      // Item already in queue (pending/in-flight)
 	QueueFull                          // Queue channel is at capacity
+	QueueStopped                       // Queue has been stopped
 )
+
+// Typed errors for blocking enqueues
+var (
+	ErrQueueDraining = errors.New("queue is draining")
+	ErrQueueStopped  = errors.New("queue is stopped")
+)
+
+func (r EnqueueResult) String() string {
+	switch r {
+	case Enqueued:
+		return "enqueued"
+	case AlreadyQueued:
+		return "already-queued"
+	case QueueFull:
+		return "queue-full"
+	case QueueStopped:
+		return "queue-stopped"
+	default:
+		return "unknown"
+	}
+}
 
 func (s QueueState) String() string {
 	switch s {
@@ -121,9 +143,9 @@ type QueueMetrics interface {
 //
 //	q := NewQueue[string, Work](100, WithQueueLogger[string, Work](Log))
 type Logger interface {
-	Debug(args ...interface{})
-	Info(args ...interface{})
-	Error(args ...interface{})
+	Debug(args ...any)
+	Info(args ...any)
+	Error(args ...any)
 }
 
 // Queue provides a thread-safe work queue with built-in deduplication.
@@ -307,7 +329,7 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 		return ctx.Err()
 	case <-q.drainCh:
 		rollback()
-		return fmt.Errorf("queue is draining")
+		return ErrQueueDraining
 	}
 }
 
@@ -316,7 +338,7 @@ func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[
 	results := make(chan Result[K], workers)
 
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()

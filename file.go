@@ -14,10 +14,20 @@ func (fileOps) Read(path string) []byte {
 	return data
 }
 
+// ReadString reads a file as a string. Panics on error.
+func (f fileOps) ReadString(path string) string {
+	return string(f.Read(path))
+}
+
 // Write writes data to a file. Panics on error.
 func (fileOps) Write(path string, data []byte) {
 	err := os.WriteFile(path, data, 0644)
 	Check(err)
+}
+
+// WriteString writes a string to a file. Panics on error.
+func (f fileOps) WriteString(path string, data string) {
+	f.Write(path, []byte(data))
 }
 
 // Open opens a file. Panics on error.

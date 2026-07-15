@@ -78,7 +78,6 @@ package utils
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -235,7 +234,7 @@ func (pq *PriorityQueue[K, V]) TryEnqueue(key K, value V, isPriority bool, skipC
 		skip = skipCount[0]
 	}
 	if !pq.running.Load() {
-		return QueueFull // Queue is stopped
+		return QueueStopped
 	}
 
 	pq.mu.Lock()
@@ -283,7 +282,7 @@ func (pq *PriorityQueue[K, V]) TryEnqueue(key K, value V, isPriority bool, skipC
 // MustEnqueue enqueues work, blocking if the appropriate queue is full
 func (pq *PriorityQueue[K, V]) MustEnqueue(ctx context.Context, key K, value V, isPriority bool) error {
 	if !pq.running.Load() {
-		return fmt.Errorf("queue is stopped")
+		return ErrQueueStopped
 	}
 
 	pq.mu.Lock()
@@ -337,7 +336,7 @@ func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler
 	var wg sync.WaitGroup
 
 	// Start workers
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()

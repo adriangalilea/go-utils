@@ -91,7 +91,7 @@ func findMonorepoRootFrom(startDir string) string {
 func isTurboRepo(turboJsonPath string) bool {
 	data := File.Read(turboJsonPath)
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal(data, &config); err != nil {
 		return false
 	}

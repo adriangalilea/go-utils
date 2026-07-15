@@ -14,6 +14,7 @@ Assert(config.Port > 0, "invalid port")
 // Redis-style env vars
 apiKey := KEV.Get("API_KEY")      // memory → os → .env
 port := KEV.Int("PORT", 8080)
+threshold := KEV.Float("ALERT_THRESHOLD", 0.95)
 KEV.Set("DEBUG", "true")
 
 // Namespaced access (bypass memory)

@@ -52,7 +52,7 @@ func (p *Panic) Error() string {
 //	    Assert(len(data) > 0, "empty packet")
 //	    Assert(port > 0 && port < 65536, "invalid port:", port)
 //	}
-func Assert(condition bool, msg ...interface{}) {
+func Assert(condition bool, msg ...any) {
 	if !condition {
 		message := "assertion failed"
 		if len(msg) > 0 {

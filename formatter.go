@@ -18,6 +18,7 @@ var (
 	waitStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
 	infoStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
 	readyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	debugStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
 
 	boldStyle    = lipgloss.NewStyle().Bold(true)
 	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
@@ -29,38 +30,41 @@ var (
 	grayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
-// MessageType represents different types of formatted messages
-type MessageType int
+// messageType represents different types of formatted messages
+type messageType int
 
 const (
-	TypeTrace MessageType = iota
-	TypeInfo
-	TypeEvent
-	TypeWait
-	TypeReady
-	TypeWarn
-	TypeError
+	msgTrace messageType = iota
+	msgDebug
+	msgInfo
+	msgEvent
+	msgWait
+	msgReady
+	msgWarn
+	msgError
 )
 
 // Unicode symbols for each message type
-var symbols = map[MessageType]string{
-	TypeWait:  "○",
-	TypeError: "⨯",
-	TypeWarn:  "⚠",
-	TypeReady: "▶",
-	TypeInfo:  " ",
-	TypeEvent: "✓",
-	TypeTrace: "»",
+var symbols = map[messageType]string{
+	msgWait:  "○",
+	msgError: "⨯",
+	msgWarn:  "⚠",
+	msgReady: "▶",
+	msgInfo:  " ",
+	msgEvent: "✓",
+	msgDebug: "◦",
+	msgTrace: "»",
 }
 
-var symbolStyles = map[MessageType]lipgloss.Style{
-	TypeWait:  waitStyle,
-	TypeError: errorStyle,
-	TypeWarn:  warnStyle,
-	TypeReady: readyStyle,
-	TypeInfo:  infoStyle,
-	TypeEvent: eventStyle,
-	TypeTrace: traceStyle,
+var symbolStyles = map[messageType]lipgloss.Style{
+	msgWait:  waitStyle,
+	msgError: errorStyle,
+	msgWarn:  warnStyle,
+	msgReady: readyStyle,
+	msgInfo:  infoStyle,
+	msgEvent: eventStyle,
+	msgDebug: debugStyle,
+	msgTrace: traceStyle,
 }
 
 // formatOps handles all formatting operations
@@ -91,7 +95,7 @@ func shouldEnableColor() bool {
 }
 
 // formatMessage creates a formatted message with symbol and color
-func (f *formatOps) formatMessage(msgType MessageType, args ...interface{}) string {
+func (f *formatOps) formatMessage(msgType messageType, args ...any) string {
 	message := String(args...)
 
 	symbol := symbols[msgType]
@@ -103,74 +107,84 @@ func (f *formatOps) formatMessage(msgType MessageType, args ...interface{}) stri
 }
 
 // Error returns an error-formatted string
-func (f *formatOps) Error(args ...interface{}) string {
-	return f.formatMessage(TypeError, args...)
+func (f *formatOps) Error(args ...any) string {
+	return f.formatMessage(msgError, args...)
 }
 
 // Warn returns a warning-formatted string
-func (f *formatOps) Warn(args ...interface{}) string {
-	return f.formatMessage(TypeWarn, args...)
+func (f *formatOps) Warn(args ...any) string {
+	return f.formatMessage(msgWarn, args...)
 }
 
 // Info returns an info-formatted string
-func (f *formatOps) Info(args ...interface{}) string {
-	return f.formatMessage(TypeInfo, args...)
+func (f *formatOps) Info(args ...any) string {
+	return f.formatMessage(msgInfo, args...)
 }
 
 // Wait returns a wait-formatted string
-func (f *formatOps) Wait(args ...interface{}) string {
-	return f.formatMessage(TypeWait, args...)
+func (f *formatOps) Wait(args ...any) string {
+	return f.formatMessage(msgWait, args...)
 }
 
 // Ready returns a ready-formatted string
-func (f *formatOps) Ready(args ...interface{}) string {
-	return f.formatMessage(TypeReady, args...)
+func (f *formatOps) Ready(args ...any) string {
+	return f.formatMessage(msgReady, args...)
 }
 
 // Event returns an event-formatted string
-func (f *formatOps) Event(args ...interface{}) string {
-	return f.formatMessage(TypeEvent, args...)
+func (f *formatOps) Event(args ...any) string {
+	return f.formatMessage(msgEvent, args...)
+}
+
+// Debug returns a debug-formatted string
+func (f *formatOps) Debug(args ...any) string {
+	return f.formatMessage(msgDebug, args...)
 }
 
 // Trace returns a trace-formatted string
-func (f *formatOps) Trace(args ...interface{}) string {
-	return f.formatMessage(TypeTrace, args...)
+func (f *formatOps) Trace(args ...any) string {
+	return f.formatMessage(msgTrace, args...)
 }
 
 // Package-level functions using default formatter
 
 // Error returns an error-formatted string
-func Error(args ...interface{}) string {
+func Error(args ...any) string {
 	return Format.Error(args...)
 }
 
 // Warn returns a warning-formatted string
-func Warn(args ...interface{}) string {
+func Warn(args ...any) string {
 	return Format.Warn(args...)
 }
 
 // Info returns an info-formatted string
-func Info(args ...interface{}) string {
+func Info(args ...any) string {
 	return Format.Info(args...)
 }
 
 // Wait returns a wait-formatted string
-func Wait(args ...interface{}) string {
+func Wait(args ...any) string {
 	return Format.Wait(args...)
 }
 
 // Ready returns a ready-formatted string
-func Ready(args ...interface{}) string {
+func Ready(args ...any) string {
 	return Format.Ready(args...)
 }
 
 // Event returns an event-formatted string
-func Event(args ...interface{}) string {
+func Event(args ...any) string {
 	return Format.Event(args...)
 }
 
+// Debug returns a debug-formatted string
+func Debug(args ...any) string {
+	return Format.Debug(args...)
+}
+
 // Trace returns a trace-formatted string
-func Trace(args ...interface{}) string {
+func Trace(args ...any) string {
 	return Format.Trace(args...)
 }
 
@@ -320,7 +334,7 @@ func Number(value float64, decimals int) string {
 //
 //	String(42)                    // "42"
 //	String("port:", 8080)         // "port: 8080"
-func String(args ...interface{}) string {
+func String(args ...any) string {
 	s := fmt.Sprintln(args...)
 	return s[:len(s)-1]
 }

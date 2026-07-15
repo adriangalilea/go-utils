@@ -7,16 +7,16 @@ import (
 	"sync"
 )
 
-// LogLevel for filtering output
-type LogLevel int
+// logLevel for filtering output
+type logLevel int
 
 const (
-	LogSilent LogLevel = iota
-	LogError
-	LogWarn
-	LogInfo
-	LogDebug
-	LogTrace
+	logSilent logLevel = iota
+	logError
+	logWarn
+	logInfo
+	logDebug
+	logTrace
 )
 
 // logOps handles all logging operations with level filtering
@@ -40,15 +40,15 @@ func NewLogger(context string) *logOps {
 	}
 }
 
-// getLevel returns the current log level from KEV
-// If logger has a context, checks {context}_LOG_LEVEL first
-func (l *logOps) getLevel() LogLevel {
+// getLevel returns the current log level from KEV.
+// If logger has a context, checks {context}_LOG_LEVEL first.
+// Both lookups pass a default so KEV caches misses - without it every
+// suppressed log line would rescan the .env files on disk.
+func (l *logOps) getLevel() logLevel {
 	var level string
 
 	if l.context != "" {
-		// Check context-specific level first
-		contextKey := l.context + "_LOG_LEVEL"
-		level = KEV.Get(contextKey)
+		level = KEV.Get(l.context+"_LOG_LEVEL", "")
 	}
 
 	// If no context or context level not set, use general LOG_LEVEL
@@ -59,48 +59,55 @@ func (l *logOps) getLevel() LogLevel {
 	return l.parseLevel(strings.ToLower(level))
 }
 
-// parseLevel converts a string to LogLevel
-func (l *logOps) parseLevel(level string) LogLevel {
+// parseLevel converts a string to logLevel. An unknown level is a
+// misconfiguration - scream instead of silently logging at info.
+func (l *logOps) parseLevel(level string) logLevel {
 	switch level {
 	case "silent":
-		return LogSilent
+		return logSilent
 	case "error":
-		return LogError
+		return logError
 	case "warn", "warning":
-		return LogWarn
+		return logWarn
 	case "info":
-		return LogInfo
+		return logInfo
 	case "debug":
-		return LogDebug
+		return logDebug
 	case "trace":
-		return LogTrace
+		return logTrace
 	default:
-		return LogInfo
+		panic(&Panic{Message: String("unknown log level:", level, "(want silent/error/warn/info/debug/trace)")})
 	}
 }
 
 // shouldLog checks if message should be logged at given level
-func (l *logOps) shouldLog(msgLevel LogLevel) bool {
+func (l *logOps) shouldLog(msgLevel logLevel) bool {
 	currentLevel := l.getLevel()
 	return msgLevel <= currentLevel
 }
 
 // Error logs an error message to stderr (always logs unless silent)
-func (l *logOps) Error(args ...interface{}) {
-	if l.shouldLog(LogError) {
+func (l *logOps) Error(args ...any) {
+	if l.shouldLog(logError) {
 		fmt.Fprintln(os.Stderr, Format.Error(args...))
 	}
 }
 
 // Warn logs a warning message if level allows
-func (l *logOps) Warn(args ...interface{}) {
-	if l.shouldLog(LogWarn) {
+func (l *logOps) Warn(args ...any) {
+	if l.shouldLog(logWarn) {
 		fmt.Println(Format.Warn(args...))
 	}
 }
 
-// WarnOnce logs a warning only once per unique message
-func (l *logOps) WarnOnce(args ...interface{}) {
+// WarnOnce logs a warning only once per unique message.
+// A suppressed warning doesn't count as seen - it still fires if the
+// log level allows warnings later.
+func (l *logOps) WarnOnce(args ...any) {
+	if !l.shouldLog(logWarn) {
+		return
+	}
+
 	key := String(args...)
 
 	l.mu.Lock()
@@ -111,56 +118,54 @@ func (l *logOps) WarnOnce(args ...interface{}) {
 	l.warnOnce[key] = struct{}{}
 	l.mu.Unlock()
 
-	if l.shouldLog(LogWarn) {
-		fmt.Println(Format.Warn(args...))
-	}
+	fmt.Println(Format.Warn(args...))
 }
 
 // Info logs an info message if level allows
-func (l *logOps) Info(args ...interface{}) {
-	if l.shouldLog(LogInfo) {
+func (l *logOps) Info(args ...any) {
+	if l.shouldLog(logInfo) {
 		fmt.Println(Format.Info(args...))
 	}
 }
 
 // Event logs an event message (same level as info)
-func (l *logOps) Event(args ...interface{}) {
-	if l.shouldLog(LogInfo) {
+func (l *logOps) Event(args ...any) {
+	if l.shouldLog(logInfo) {
 		fmt.Println(Format.Event(args...))
 	}
 }
 
 // Wait logs a wait message (same level as info)
-func (l *logOps) Wait(args ...interface{}) {
-	if l.shouldLog(LogInfo) {
+func (l *logOps) Wait(args ...any) {
+	if l.shouldLog(logInfo) {
 		fmt.Println(Format.Wait(args...))
 	}
 }
 
 // Ready logs a ready message (same level as info)
-func (l *logOps) Ready(args ...interface{}) {
-	if l.shouldLog(LogInfo) {
+func (l *logOps) Ready(args ...any) {
+	if l.shouldLog(logInfo) {
 		fmt.Println(Format.Ready(args...))
 	}
 }
 
 // Debug logs a debug message if level allows
-func (l *logOps) Debug(args ...interface{}) {
-	if l.shouldLog(LogDebug) {
-		fmt.Println(Format.Info(args...))
+func (l *logOps) Debug(args ...any) {
+	if l.shouldLog(logDebug) {
+		fmt.Println(Format.Debug(args...))
 	}
 }
 
 // Trace logs a trace message if level allows
-func (l *logOps) Trace(args ...interface{}) {
-	if l.shouldLog(LogTrace) {
+func (l *logOps) Trace(args ...any) {
+	if l.shouldLog(logTrace) {
 		fmt.Println(Format.Trace(args...))
 	}
 }
 
 // Bootstrap logs an indented message (for sub-steps)
-func (l *logOps) Bootstrap(args ...interface{}) {
-	if l.shouldLog(LogInfo) {
+func (l *logOps) Bootstrap(args ...any) {
+	if l.shouldLog(logInfo) {
 		fmt.Println("   " + String(args...))
 	}
 }

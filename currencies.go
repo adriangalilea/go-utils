@@ -260,9 +260,10 @@ func (c *currencyOps) BasisPointsToPercent(bps int) float64 {
 	return float64(bps) / 100.0
 }
 
-// PercentToBasisPoints converts percentage to basis points (1% = 100 bps)
+// PercentToBasisPoints converts percentage to basis points (1% = 100 bps).
+// Rounds to nearest - truncation would turn 0.29999% into 29 bps.
 func (c *currencyOps) PercentToBasisPoints(percent float64) int {
-	return int(percent * 100)
+	return int(math.Round(percent * 100))
 }
 
 // FormatBasisPoints formats basis points as a string with "bps" suffix
