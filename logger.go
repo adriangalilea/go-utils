@@ -7,7 +7,6 @@ import (
 	"sync"
 )
 
-// logLevel for filtering output
 type logLevel int
 
 const (
@@ -19,20 +18,20 @@ const (
 	logTrace
 )
 
-// logOps handles all logging operations with level filtering
 type logOps struct {
 	mu       sync.Mutex
 	warnOnce map[string]struct{}
-	context  string // Optional context for context-specific log levels
+	context  string
 }
 
-// Log provides logging operations with level filtering
+// Log filters by LOG_LEVEL (via KEV, so .env works) and prints through
+// Format. Everything goes to stderr - stdout is reserved for data, so
+// piping a tool's output never chokes on a log line.
 var Log = &logOps{
 	warnOnce: make(map[string]struct{}),
 }
 
-// NewLogger creates a logger for a specific context
-// It will check {context}_LOG_LEVEL first, then fall back to LOG_LEVEL
+// NewLogger scopes a logger to {context}_LOG_LEVEL, falling back to LOG_LEVEL.
 func NewLogger(context string) *logOps {
 	return &logOps{
 		warnOnce: make(map[string]struct{}),
@@ -40,8 +39,6 @@ func NewLogger(context string) *logOps {
 	}
 }
 
-// getLevel returns the current log level from KEV.
-// If logger has a context, checks {context}_LOG_LEVEL first.
 // Both lookups pass a default so KEV caches misses - without it every
 // suppressed log line would rescan the .env files on disk.
 func (l *logOps) getLevel() logLevel {
@@ -51,7 +48,6 @@ func (l *logOps) getLevel() logLevel {
 		level = KEV.Get(l.context+"_LOG_LEVEL", "")
 	}
 
-	// If no context or context level not set, use general LOG_LEVEL
 	if level == "" {
 		level = KEV.Get("LOG_LEVEL", "info")
 	}
@@ -59,8 +55,8 @@ func (l *logOps) getLevel() logLevel {
 	return l.parseLevel(strings.ToLower(level))
 }
 
-// parseLevel converts a string to logLevel. An unknown level is a
-// misconfiguration - scream instead of silently logging at info.
+// An unknown level is a misconfiguration - scream instead of silently
+// logging at info.
 func (l *logOps) parseLevel(level string) logLevel {
 	switch level {
 	case "silent":
@@ -80,27 +76,22 @@ func (l *logOps) parseLevel(level string) logLevel {
 	}
 }
 
-// shouldLog checks if message should be logged at given level
 func (l *logOps) shouldLog(msgLevel logLevel) bool {
-	currentLevel := l.getLevel()
-	return msgLevel <= currentLevel
+	return msgLevel <= l.getLevel()
 }
 
-// Error logs an error message to stderr (always logs unless silent)
 func (l *logOps) Error(args ...any) {
 	if l.shouldLog(logError) {
 		fmt.Fprintln(os.Stderr, Format.Error(args...))
 	}
 }
 
-// Warn logs a warning message if level allows
 func (l *logOps) Warn(args ...any) {
 	if l.shouldLog(logWarn) {
-		fmt.Println(Format.Warn(args...))
+		fmt.Fprintln(os.Stderr, Format.Warn(args...))
 	}
 }
 
-// WarnOnce logs a warning only once per unique message.
 // A suppressed warning doesn't count as seen - it still fires if the
 // log level allows warnings later.
 func (l *logOps) WarnOnce(args ...any) {
@@ -118,54 +109,48 @@ func (l *logOps) WarnOnce(args ...any) {
 	l.warnOnce[key] = struct{}{}
 	l.mu.Unlock()
 
-	fmt.Println(Format.Warn(args...))
+	fmt.Fprintln(os.Stderr, Format.Warn(args...))
 }
 
-// Info logs an info message if level allows
 func (l *logOps) Info(args ...any) {
 	if l.shouldLog(logInfo) {
-		fmt.Println(Format.Info(args...))
+		fmt.Fprintln(os.Stderr, Format.Info(args...))
 	}
 }
 
-// Event logs an event message (same level as info)
 func (l *logOps) Event(args ...any) {
 	if l.shouldLog(logInfo) {
-		fmt.Println(Format.Event(args...))
+		fmt.Fprintln(os.Stderr, Format.Event(args...))
 	}
 }
 
-// Wait logs a wait message (same level as info)
 func (l *logOps) Wait(args ...any) {
 	if l.shouldLog(logInfo) {
-		fmt.Println(Format.Wait(args...))
+		fmt.Fprintln(os.Stderr, Format.Wait(args...))
 	}
 }
 
-// Ready logs a ready message (same level as info)
 func (l *logOps) Ready(args ...any) {
 	if l.shouldLog(logInfo) {
-		fmt.Println(Format.Ready(args...))
+		fmt.Fprintln(os.Stderr, Format.Ready(args...))
 	}
 }
 
-// Debug logs a debug message if level allows
 func (l *logOps) Debug(args ...any) {
 	if l.shouldLog(logDebug) {
-		fmt.Println(Format.Debug(args...))
+		fmt.Fprintln(os.Stderr, Format.Debug(args...))
 	}
 }
 
-// Trace logs a trace message if level allows
 func (l *logOps) Trace(args ...any) {
 	if l.shouldLog(logTrace) {
-		fmt.Println(Format.Trace(args...))
+		fmt.Fprintln(os.Stderr, Format.Trace(args...))
 	}
 }
 
-// Bootstrap logs an indented message (for sub-steps)
+// Indented sub-step line, no symbol.
 func (l *logOps) Bootstrap(args ...any) {
 	if l.shouldLog(logInfo) {
-		fmt.Println("   " + String(args...))
+		fmt.Fprintln(os.Stderr, "   "+String(args...))
 	}
 }

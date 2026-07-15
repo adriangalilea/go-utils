@@ -116,13 +116,13 @@ req := &SearchParams{Limit: &limit}
 req := &SearchParams{Limit: Ptr(10)}
 ```
 
-[**file.go**](file.go): File operations that panic on error — Read(), Write(), Open(), Create(), Exists(), Remove(), Copy(). No error returns, panics with `*Panic` via Check().
+[**file.go**](file.go): File operations that panic on error — Read(), ReadString(), Write(), WriteString(), Open(), Create(), Exists(), Remove(), Copy(). Write is atomic (temp file + fsync + rename): a crash mid-write leaves the old content, never a truncated file.
 
 [**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, panics with `*Panic` via Check().
 
 [**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Event(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
 
-[**logger.go**](logger.go): Log namespace with level filtering via KEV.Get("LOG_LEVEL") - Error(), Warn(), Info(), Event(), Wait(), Ready(), Debug(), Trace(). Includes WarnOnce() for stateful warning deduplication.
+[**logger.go**](logger.go): Log namespace with level filtering via KEV.Get("LOG_LEVEL") - Error(), Warn(), Info(), Event(), Wait(), Ready(), Debug(), Trace(). Everything writes to stderr — stdout stays clean for data, so piping a tool's output never chokes on a log line. Includes WarnOnce() for stateful warning deduplication.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 
@@ -130,7 +130,7 @@ req := &SearchParams{Limit: Ptr(10)}
 
 [**xdg.go**](xdg.go): XDG Base Directory paths — reads env vars set by [xdg-dirs](https://github.com/adriangalilea/xdg-dirs), falls back to spec defaults. Variadic path segments for clean composition with Dir.Create().
 
-[**ip.go**](ip.go): Strong IPv4/IPv6 types that make invalid states unrepresentable - IPv4 (4 bytes), IPv6 (16 bytes), and IP discriminated union. Parse once at boundaries, guaranteed valid internally. No defensive checks needed after construction.
+[**net.go**](net.go): Network range math the stdlib's `net/netip` leaves out — Net.First(), Last(), Broadcast(), Size(), UsableSize() over netip.Prefix. For the IP types themselves use netip.Addr/netip.Prefix directly; they already make invalid states unrepresentable.
 
 [**queue.go**](queue.go): Thread-safe work queue with automatic deduplication - Queue[K,V] ensures each key is queued at most once until completion. Perfect for API calls, background jobs, and event processing that must run exactly once. Features result channels, retry support, graceful drain, batch operations, and metrics hooks.
 

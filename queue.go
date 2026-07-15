@@ -63,7 +63,6 @@ import (
 	"time"
 )
 
-// QueueState represents the state of a queued item
 type QueueState int
 
 const (
@@ -73,7 +72,6 @@ const (
 	QueueStateFailed
 )
 
-// EnqueueResult describes the outcome of TryEnqueue
 type EnqueueResult int
 
 const (
@@ -83,7 +81,6 @@ const (
 	QueueStopped                       // Queue has been stopped
 )
 
-// Typed errors for blocking enqueues
 var (
 	ErrQueueDraining = errors.New("queue is draining")
 	ErrQueueStopped  = errors.New("queue is stopped")
@@ -119,18 +116,14 @@ func (s QueueState) String() string {
 	}
 }
 
-// Handler is the function signature for processing queue items.
-// Context allows for cancellation and deadline propagation.
 type Handler[K comparable, V any] func(ctx context.Context, key K, value V) error
 
-// Result represents the outcome of processing a queue item
 type Result[K comparable] struct {
 	Key      K
 	Error    error
 	Duration time.Duration
 }
 
-// QueueMetrics provides observability into queue operations
 type QueueMetrics interface {
 	RecordEnqueue(success bool)
 	RecordDequeue(duration time.Duration, err error)
@@ -172,14 +165,12 @@ type Queue[K comparable, V any] struct {
 	drainCh   chan struct{}
 }
 
-// queueItem wraps work with a deduplication key
 type queueItem[K comparable, V any] struct {
 	Key        K
 	Value      V
 	EnqueuedAt time.Time
 }
 
-// Option configures a Queue
 type Option[K comparable, V any] func(*Queue[K, V])
 
 // WithMaxCompleted sets the maximum number of completed items to track (for dedup)
@@ -189,21 +180,18 @@ func WithMaxCompleted[K comparable, V any](n int) Option[K, V] {
 	}
 }
 
-// WithMetrics adds metrics collection to the queue
 func WithMetrics[K comparable, V any](m QueueMetrics) Option[K, V] {
 	return func(q *Queue[K, V]) {
 		q.metrics = m
 	}
 }
 
-// WithQueueLogger adds logging to the queue
 func WithQueueLogger[K comparable, V any](l Logger) Option[K, V] {
 	return func(q *Queue[K, V]) {
 		q.logger = l
 	}
 }
 
-// NewQueue creates a new Queue with the specified buffer size and options
 func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[K, V] {
 	q := &Queue[K, V]{
 		work:         make(chan queueItem[K, V], bufferSize),
@@ -213,7 +201,6 @@ func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[
 		drainCh:      make(chan struct{}),
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(q)
 	}
@@ -221,12 +208,10 @@ func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[
 	return q
 }
 
-// TryEnqueue attempts to enqueue work, returns why it succeeded or failed
 func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Check if already pending or in-flight
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		if q.logger != nil {
 			q.logger.Debug("Queue: item already", state, ":", key)
@@ -241,7 +226,6 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 	oldState, hadState := q.state[key]
 	q.state[key] = QueueStatePending
 
-	// Try non-blocking send
 	select {
 	case q.work <- queueItem[K, V]{Key: key, Value: value, EnqueuedAt: time.Now()}:
 		q.totalEnqueued.Add(1)
@@ -273,7 +257,6 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 	}
 }
 
-// TryEnqueueBatch attempts to enqueue multiple items, returns keys that were successfully enqueued
 func (q *Queue[K, V]) TryEnqueueBatch(items map[K]V) []K {
 	enqueued := make([]K, 0, len(items))
 
@@ -290,7 +273,6 @@ func (q *Queue[K, V]) TryEnqueueBatch(items map[K]V) []K {
 func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 	q.mu.Lock()
 
-	// Check if already pending or in-flight
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		q.mu.Unlock()
 		if q.logger != nil {
@@ -299,7 +281,6 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 		return nil // Already queued or being processed, not an error
 	}
 
-	// Mark as pending
 	oldState, hadState := q.state[key]
 	q.state[key] = QueueStatePending
 	q.mu.Unlock()
@@ -314,7 +295,6 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 		q.mu.Unlock()
 	}
 
-	// Blocking send
 	select {
 	case q.work <- queueItem[K, V]{Key: key, Value: value, EnqueuedAt: time.Now()}:
 		q.totalEnqueued.Add(1)
@@ -346,7 +326,6 @@ func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[
 		}(i)
 	}
 
-	// Close results channel when all workers done
 	go func() {
 		wg.Wait()
 		close(results)
@@ -355,7 +334,6 @@ func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[
 	return results
 }
 
-// processWorker is the internal worker that processes queue items
 func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], results chan<- Result[K], workerID int) {
 	if q.logger != nil {
 		q.logger.Debug("Queue: worker", workerID, "started")
@@ -388,15 +366,12 @@ func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], 
 	}
 }
 
-// processItem processes a single queue item
 func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], handler Handler[K, V], results chan<- Result[K]) {
-	// Update metrics
 	waitTime := time.Since(item.EnqueuedAt)
 	if q.metrics != nil {
 		q.metrics.RecordQueueSize(len(q.work))
 	}
 
-	// Mark as in-flight
 	q.mu.Lock()
 	q.state[item.Key] = QueueStateInFlight
 	q.mu.Unlock()
@@ -405,7 +380,6 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 		q.metrics.RecordStateChange(QueueStatePending, QueueStateInFlight)
 	}
 
-	// Process the work
 	start := time.Now()
 	err := handler(ctx, item.Key, item.Value)
 	duration := time.Since(start)
@@ -427,7 +401,6 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 	})
 	q.mu.Unlock()
 
-	// Record metrics
 	if q.metrics != nil {
 		q.metrics.RecordDequeue(duration, err)
 		if err == nil {
@@ -437,7 +410,6 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 		}
 	}
 
-	// Log result
 	if q.logger != nil {
 		if err != nil {
 			q.logger.Error("Queue: item failed:", item.Key, "wait:", waitTime, "duration:", duration, "error:", err)
@@ -446,7 +418,6 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 		}
 	}
 
-	// Send result
 	select {
 	case results <- Result[K]{Key: item.Key, Error: err, Duration: duration}:
 	case <-ctx.Done():
@@ -454,7 +425,6 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 	}
 }
 
-// ProcessWithRetry processes items with automatic retry on failure
 func (q *Queue[K, V]) ProcessWithRetry(ctx context.Context, workers int, handler Handler[K, V], maxRetries int) <-chan Result[K] {
 	retryHandler := func(ctx context.Context, key K, value V) error {
 		var err error
@@ -515,7 +485,6 @@ func (q *Queue[K, V]) Drain() {
 	})
 }
 
-// GetState returns the current state of a queued item
 func (q *Queue[K, V]) GetState(key K) (QueueState, bool) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -551,7 +520,6 @@ func (q *Queue[K, V]) Clear() {
 	}
 }
 
-// QueueStats provides detailed queue statistics
 type QueueStats struct {
 	QueueSize      int
 	Pending        int
@@ -563,7 +531,6 @@ type QueueStats struct {
 	TotalFailed    int64
 }
 
-// Stats returns current queue statistics
 func (q *Queue[K, V]) Stats() QueueStats {
 	q.mu.RLock()
 	defer q.mu.RUnlock()

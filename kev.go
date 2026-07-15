@@ -87,7 +87,6 @@ import (
 //   - Full observability: Always know where your config came from
 //   - Redis familiar: If you know Redis, you know KEV
 
-// memEntry tracks a cached value and where it came from
 type memEntry struct {
 	value  string
 	source string // "os", ".env", "../.env", "default", "set", etc.
@@ -101,7 +100,6 @@ type kevOps struct {
 	Debug   bool      // Enable debug logging
 }
 
-// KEV provides environment variable operations with KV store semantics
 var KEV = &kevOps{
 	memory:  make(map[string]memEntry),
 	sources: []string{"os", ".env"}, // Default sources
@@ -151,7 +149,6 @@ func init() {
 
 // parseKey splits "namespace:key" or returns ("", key) for unnamespaced
 func parseKey(key string) (namespace, k string) {
-	// Check for invalid patterns
 	if strings.HasPrefix(key, ":") {
 		panic(&Panic{Message: String("invalid key format - starts with colon:", key)})
 	}
@@ -161,7 +158,6 @@ func parseKey(key string) (namespace, k string) {
 
 	parts := strings.SplitN(key, ":", 2)
 	if len(parts) == 2 {
-		// Validate namespace and key aren't empty
 		if parts[0] == "" || parts[1] == "" {
 			panic(&Panic{Message: String("invalid key format - empty namespace or key:", key)})
 		}
@@ -192,7 +188,6 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		Log.Info("KEV", "Looking for", key)
 	}
 
-	// Namespaced - direct access
 	if namespace != "" {
 		val := k.getFromNamespace(namespace, realKey)
 		if val != "" {
@@ -204,7 +199,6 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		if debug {
 			Log.Info("KEV", "  ✗", namespace+":", "not found")
 		}
-		// Use default if provided
 		if len(defaultValue) > 0 {
 			if debug {
 				Log.Info("KEV", "  → using default:", defaultValue[0])
@@ -214,7 +208,6 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		return ""
 	}
 
-	// Unnamespaced - check memory first
 	k.mu.RLock()
 	entry, exists := k.memory[realKey]
 	sources := k.sources
@@ -231,13 +224,11 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		Log.Info("KEV", "  ✗ memory: not found")
 	}
 
-	// Search through sources
 	for _, source := range sources {
 		if val := k.getFromNamespace(source, realKey); val != "" {
 			if debug {
 				Log.Info("KEV", "  ✓", source+":", "found", val, "(caching)")
 			}
-			// Cache in memory for next time with source info
 			// Store absolute path for file sources
 			absoluteSource := source
 			if source != "os" && source != "default" && source != "set" {
@@ -255,7 +246,6 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		}
 	}
 
-	// Use default and cache it
 	if len(defaultValue) > 0 {
 		if debug {
 			Log.Info("KEV", "  → using default:", defaultValue[0], "(caching)")
@@ -340,7 +330,6 @@ func assertKnownNamespace(namespace string) {
 		"unknown KEV namespace:", namespace, "(want \"os\" or a file path like \".env\")")
 }
 
-// getFromNamespace gets a value directly from a namespace
 func (k *kevOps) getFromNamespace(namespace, key string) string {
 	assertKnownNamespace(namespace)
 	if namespace == "os" {
@@ -374,7 +363,6 @@ func (k *kevOps) Set(key, value string) {
 	k.mu.Unlock()
 }
 
-// setToNamespace sets a value directly to a namespace
 func (k *kevOps) setToNamespace(namespace, key, value string) {
 	assertKnownNamespace(namespace)
 	if namespace == "os" {
@@ -384,16 +372,13 @@ func (k *kevOps) setToNamespace(namespace, key, value string) {
 	k.setToFile(namespace, key, value)
 }
 
-// Has checks if key exists
 func (k *kevOps) Has(key string) bool {
 	namespace, realKey := parseKey(key)
 
-	// Namespaced - check directly
 	if namespace != "" {
 		return k.hasInNamespace(namespace, realKey)
 	}
 
-	// Unnamespaced - check memory then sources
 	k.mu.RLock()
 	_, exists := k.memory[realKey]
 	sources := k.sources
@@ -403,7 +388,6 @@ func (k *kevOps) Has(key string) bool {
 		return true
 	}
 
-	// Check sources
 	for _, source := range sources {
 		if k.hasInNamespace(source, realKey) {
 			return true
@@ -440,7 +424,6 @@ func (k *kevOps) Keys(patterns ...string) []string {
 		namespace, keyPattern := parseKey(pattern)
 
 		if namespace != "" {
-			// Namespaced pattern
 			nsKeys := k.keysFromNamespace(namespace, keyPattern)
 			for _, key := range nsKeys {
 				fullKey := namespace + ":" + key
@@ -450,7 +433,6 @@ func (k *kevOps) Keys(patterns ...string) []string {
 				}
 			}
 		} else {
-			// Unnamespaced - get from memory and sources
 			k.mu.RLock()
 			for key := range k.memory {
 				if matchPattern(key, keyPattern) && !seen[key] {
@@ -461,7 +443,6 @@ func (k *kevOps) Keys(patterns ...string) []string {
 			sources := k.sources
 			k.mu.RUnlock()
 
-			// Also check sources
 			for _, source := range sources {
 				nsKeys := k.keysFromNamespace(source, keyPattern)
 				for _, key := range nsKeys {
@@ -539,12 +520,10 @@ func (k *kevOps) parseEnvFile(path, pattern string, result map[string]string, ke
 	}
 }
 
-// getAllFromNamespace gets all key-value pairs from a namespace matching pattern
 func (k *kevOps) getAllFromNamespace(namespace, pattern string) map[string]string {
 	return k.getNamespaceData(namespace, pattern, false)
 }
 
-// keysFromNamespace gets all keys from a namespace matching pattern
 func (k *kevOps) keysFromNamespace(namespace, pattern string) []string {
 	data := k.getNamespaceData(namespace, pattern, true)
 	keys := make([]string, 0, len(data))
@@ -577,12 +556,10 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 	result := make(map[string]map[string]string)
 
 	if len(patterns) == 0 {
-		// Default - return memory only with source info
 		k.mu.RLock()
 		if len(k.memory) > 0 {
 			memCopy := make(map[string]string)
 			for key, entry := range k.memory {
-				// Include source info in value
 				memCopy[key] = entry.value + " [from: " + entry.source + "]"
 			}
 			result["memory"] = memCopy
@@ -591,7 +568,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		return result
 	}
 
-	// Check if any pattern has namespace
 	hasNamespace := false
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, ":") {
@@ -601,7 +577,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 	}
 
 	if !hasNamespace {
-		// No namespaces - get from memory and all sources
 		k.mu.RLock()
 		memMatches := make(map[string]string)
 		for key, entry := range k.memory {
@@ -618,7 +593,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		sources := k.sources
 		k.mu.RUnlock()
 
-		// Check all sources
 		for _, source := range sources {
 			sourceMatches := make(map[string]string)
 			sourceVars := k.getAllFromNamespace(source, "*")
@@ -637,9 +611,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		return result
 	}
 
-	// Special case for *:* - get all namespaces
 	if len(patterns) == 1 && patterns[0] == "*:*" {
-		// Add memory
 		k.mu.RLock()
 		if len(k.memory) > 0 {
 			memCopy := make(map[string]string)
@@ -650,7 +622,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		}
 		k.mu.RUnlock()
 
-		// Add all sources
 		k.mu.RLock()
 		sources := k.sources
 		k.mu.RUnlock()
@@ -661,7 +632,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 			}
 		}
 	} else {
-		// Process specific patterns
 		for _, pattern := range patterns {
 			namespace, keyPattern := parseKey(pattern)
 			if namespace != "" {
@@ -689,7 +659,6 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 //	KEV.Clear()           // Clear all memory
 //	KEV.Clear("API_*")    // Clear API_* from memory only
 func (k *kevOps) Clear(patterns ...string) {
-	// Only allow memory clearing for safety
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, ":") {
 			panic(&Panic{Message: String("Clear() with namespace is dangerous! Use ClearUnsafe() if you really need this.")})
@@ -700,12 +669,10 @@ func (k *kevOps) Clear(patterns ...string) {
 	defer k.mu.Unlock()
 
 	if len(patterns) == 0 {
-		// Clear all memory
 		k.memory = make(map[string]memEntry)
 		return
 	}
 
-	// Clear patterns from memory only
 	for _, pattern := range patterns {
 		for key := range k.memory {
 			if matchPattern(key, pattern) {
@@ -727,7 +694,6 @@ func (k *kevOps) ClearUnsafe(patterns ...string) {
 		namespace, keyPattern := parseKey(pattern)
 
 		if namespace == "" {
-			// No namespace - just use regular Clear
 			k.Clear(pattern)
 			continue
 		}
@@ -742,7 +708,6 @@ func (k *kevOps) ClearUnsafe(patterns ...string) {
 				Check(os.Unsetenv(key))
 			}
 		default:
-			// File namespace - would need to rewrite file
 			panic(&Panic{Message: String("Clearing from files not yet implemented")})
 		}
 	}
@@ -754,16 +719,13 @@ func (k *kevOps) Unset(keys ...string) {
 		namespace, realKey := parseKey(key)
 
 		if namespace != "" {
-			// Namespaced unset
 			switch namespace {
 			case "os":
 				Check(os.Unsetenv(realKey))
 			default:
-				// File - would need to rewrite file
 				panic(&Panic{Message: String("Unsetting from files not yet implemented")})
 			}
 		} else {
-			// Unnamespaced - remove from memory
 			k.mu.Lock()
 			delete(k.memory, realKey)
 			k.mu.Unlock()
@@ -866,10 +828,8 @@ func (k *kevOps) Export(path string) {
 func (k *kevOps) Dump() {
 	all := k.All()
 
-	// Always a nested map now
 	for namespace, vars := range all {
 		for key, val := range vars {
-			// Mask sensitive values
 			lower := strings.ToLower(key)
 			if strings.Contains(lower, "key") ||
 				strings.Contains(lower, "secret") ||
@@ -908,21 +868,18 @@ type sourceOps struct {
 	kev *kevOps
 }
 
-// Set replaces all sources
 func (s sourceOps) Set(sources ...string) {
 	s.kev.mu.Lock()
 	defer s.kev.mu.Unlock()
 	s.kev.sources = sources
 }
 
-// Add adds sources to the search list
 func (s sourceOps) Add(sources ...string) {
 	s.kev.mu.Lock()
 	defer s.kev.mu.Unlock()
 	s.kev.sources = append(s.kev.sources, sources...)
 }
 
-// Remove removes specific sources
 func (s sourceOps) Remove(sources ...string) {
 	s.kev.mu.Lock()
 	defer s.kev.mu.Unlock()
@@ -943,7 +900,6 @@ func (s sourceOps) Remove(sources ...string) {
 	s.kev.sources = newSources
 }
 
-// List returns current sources
 func (s sourceOps) List() []string {
 	s.kev.mu.RLock()
 	defer s.kev.mu.RUnlock()
@@ -953,7 +909,6 @@ func (s sourceOps) List() []string {
 	return result
 }
 
-// Clear removes all sources
 func (s sourceOps) Clear() {
 	s.kev.mu.Lock()
 	defer s.kev.mu.Unlock()
@@ -967,9 +922,7 @@ func (k *kevOps) getFromFile(path string, key string) string {
 	return matches[key]
 }
 
-// setToFile writes or updates a key in a file
 func (k *kevOps) setToFile(path string, key string, value string) {
-	// Read existing content
 	var lines []string
 	found := false
 
@@ -980,18 +933,15 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 			line := scanner.Text()
 			trimmed := strings.TrimSpace(line)
 
-			// Skip empty and comments
 			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 				lines = append(lines, line)
 				continue
 			}
 
-			// Check if this is the key we're updating
 			parts := strings.SplitN(trimmed, "=", 2)
 			if len(parts) >= 1 {
 				fileKey := strings.TrimSpace(parts[0])
 				if fileKey == key {
-					// Update existing key
 					if strings.ContainsAny(value, " \t\n\"'") {
 						value = fmt.Sprintf("%q", value)
 					}
@@ -1006,7 +956,6 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 		}
 	}
 
-	// If key wasn't found, append it
 	if !found {
 		if strings.ContainsAny(value, " \t\n\"'") {
 			value = fmt.Sprintf("%q", value)
@@ -1014,7 +963,6 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 		lines = append(lines, key+"="+value)
 	}
 
-	// Write back
 	content := strings.Join(lines, "\n")
 	File.Write(path, []byte(content))
 }

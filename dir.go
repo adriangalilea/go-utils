@@ -7,16 +7,15 @@ import (
 
 type dirOps struct{}
 
-// Dir provides directory operations that panic on error
+// Dir provides directory operations that panic on error.
 var Dir = dirOps{}
 
-// Create creates a directory (including parents). Panics on error.
+// Creates parents too, like mkdir -p.
 func (dirOps) Create(path string) {
-	err := os.MkdirAll(path, 0755)
-	Check(err)
+	Check(os.MkdirAll(path, 0755))
 }
 
-// Exists checks if directory exists
+// Exists is false for files - that's File.Exists.
 func (dirOps) Exists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -25,13 +24,11 @@ func (dirOps) Exists(path string) bool {
 	return info.IsDir()
 }
 
-// Remove removes a directory and all its contents. Panics on error.
+// Removes contents recursively, like rm -rf.
 func (dirOps) Remove(path string) {
-	err := os.RemoveAll(path)
-	Check(err)
+	Check(os.RemoveAll(path))
 }
 
-// List returns all entries in a directory. Panics on error.
 func (dirOps) List(path string) []string {
 	entries, err := os.ReadDir(path)
 	Check(err)
@@ -43,7 +40,6 @@ func (dirOps) List(path string) []string {
 	return names
 }
 
-// ListFull returns full paths of all entries in a directory
 func (d dirOps) ListFull(path string) []string {
 	names := d.List(path)
 	paths := make([]string, len(names))
@@ -53,12 +49,10 @@ func (d dirOps) ListFull(path string) []string {
 	return paths
 }
 
-// Copy copies a directory recursively. Panics on error.
 func (d dirOps) Copy(src, dst string) {
 	d.Create(dst)
 
-	entries := d.List(src)
-	for _, entry := range entries {
+	for _, entry := range d.List(src) {
 		srcPath := filepath.Join(src, entry)
 		dstPath := filepath.Join(dst, entry)
 
@@ -70,15 +64,12 @@ func (d dirOps) Copy(src, dst string) {
 	}
 }
 
-// Current returns the current working directory. Panics on error.
 func (dirOps) Current() string {
 	dir, err := os.Getwd()
 	Check(err)
 	return dir
 }
 
-// Change changes the current working directory. Panics on error.
 func (dirOps) Change(path string) {
-	err := os.Chdir(path)
-	Check(err)
+	Check(os.Chdir(path))
 }

@@ -15,7 +15,6 @@ var rootCmd = &cobra.Command{
 	Use:   "go-check",
 	Short: "Go code quality checker",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Default action - run all checks
 		runChecks()
 	},
 }
@@ -26,10 +25,8 @@ var fixCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureTools()
 
-		// First fix go-utils dot import issues
 		fixGoUtilsImports()
 
-		// Then run standard fixes
 		runCommand("golangci-lint", "run", "--fix")
 		runCommand("gofmt", "-w", ".")
 		Log.Ready("Fixed what I could")
@@ -58,7 +55,6 @@ var internalCmd = &cobra.Command{
 		Log.Info("These are more likely to be truly dead code:")
 		Log.Info("")
 
-		// Run deadcode and filter for unexported functions
 		deadcodeCmd := exec.Command("deadcode", "./...")
 		output, _ := deadcodeCmd.Output()
 
@@ -162,17 +158,14 @@ func isDotImportWithoutNolint(line string) bool {
 		!strings.Contains(line, "//nolint")
 }
 
-// checkGoUtilsImports checks for dot imports of go-utils without nolint
 func checkGoUtilsImports() bool {
 	hasIssues := false
 
-	// Find all .go files
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip vendor and .git directories
 		if strings.Contains(path, "vendor/") || strings.Contains(path, ".git/") {
 			return nil
 		}
@@ -202,17 +195,14 @@ func checkGoUtilsImports() bool {
 	return hasIssues
 }
 
-// fixGoUtilsImports automatically adds nolint to go-utils dot imports
 func fixGoUtilsImports() {
 	fixedCount := 0
 
-	// Find all .go files
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip vendor and .git directories
 		if strings.Contains(path, "vendor/") || strings.Contains(path, ".git/") {
 			return nil
 		}

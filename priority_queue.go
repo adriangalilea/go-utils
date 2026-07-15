@@ -83,7 +83,6 @@ import (
 	"time"
 )
 
-// PriorityQueueStats provides detailed statistics for both queues
 type PriorityQueueStats struct {
 	// Queue sizes
 	PriorityQueueSize int
@@ -107,7 +106,6 @@ type PriorityQueueStats struct {
 	FairnessRatio     int
 }
 
-// PriorityQueue manages two permanent queues with fair processing
 type PriorityQueue[K comparable, V any] struct {
 	// Synchronization
 	mu sync.RWMutex
@@ -151,7 +149,6 @@ type PriorityQueue[K comparable, V any] struct {
 	dispatcherDone   chan struct{}
 }
 
-// priorityQueueItem represents an item in the priority queue with optional skip count
 type priorityQueueItem[K comparable, V any] struct {
 	Key        K
 	Value      V
@@ -159,13 +156,11 @@ type priorityQueueItem[K comparable, V any] struct {
 	EnqueuedAt time.Time
 }
 
-// priorityWorkItem includes metadata about which queue it came from
 type priorityWorkItem[K comparable, V any] struct {
 	priorityQueueItem[K, V]
 	fromPriority bool
 }
 
-// NewPriorityQueue creates and starts a new priority queue with specified sizes and fairness ratio
 func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRatio int) *PriorityQueue[K, V] {
 	Assert(prioritySize > 0 && normalSize > 0, "queue sizes must be positive:", prioritySize, normalSize)
 	if fairnessRatio < 1 {
@@ -199,14 +194,12 @@ func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRat
 	return pq
 }
 
-// SetMinWait configures the minimum wait time between processing attempts for the same item
 func (pq *PriorityQueue[K, V]) SetMinWait(duration time.Duration) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 	pq.minWait = duration
 }
 
-// Stop gracefully shuts down the queue and dispatcher
 func (pq *PriorityQueue[K, V]) Stop() {
 	if !pq.running.CompareAndSwap(true, false) {
 		return // Already stopped
@@ -220,7 +213,6 @@ func (pq *PriorityQueue[K, V]) Stop() {
 	pq.dispatchOnce.Do(func() { close(pq.dispatcherDone) })
 	<-pq.dispatcherDone // Wait for dispatcher to finish
 
-	// Close work channel to signal any remaining workers
 	close(pq.workChannel)
 
 	pq.log.Debug("PriorityQueue: stopped")
@@ -246,12 +238,10 @@ func (pq *PriorityQueue[K, V]) TryEnqueue(key K, value V, isPriority bool, skipC
 		return AlreadyQueued
 	}
 
-	// Mark as pending and remember which queue
 	oldState, hadState := pq.state[key]
 	pq.state[key] = QueueStatePending
 	pq.isPriority[key] = isPriority
 
-	// Try non-blocking send to appropriate queue
 	item := priorityQueueItem[K, V]{Key: key, Value: value, SkipCount: skip, EnqueuedAt: time.Now()}
 
 	targetQueue := pq.normalQueue
@@ -287,26 +277,22 @@ func (pq *PriorityQueue[K, V]) MustEnqueue(ctx context.Context, key K, value V, 
 
 	pq.mu.Lock()
 
-	// Check if already pending or in-flight
 	if state, exists := pq.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		pq.mu.Unlock()
 		pq.log.Debug("PriorityQueue: item already", state, ", skipping:", key)
 		return nil // Already queued, not an error
 	}
 
-	// Mark as pending
 	oldState, hadState := pq.state[key]
 	pq.state[key] = QueueStatePending
 	pq.isPriority[key] = isPriority
 	pq.mu.Unlock()
 
-	// Select appropriate queue
 	targetQueue := pq.normalQueue
 	if isPriority {
 		targetQueue = pq.priorityQueue
 	}
 
-	// Blocking send
 	select {
 	case targetQueue <- priorityQueueItem[K, V]{Key: key, Value: value, SkipCount: 0, EnqueuedAt: time.Now()}:
 		pq.totalEnqueued.Add(1)
@@ -335,7 +321,6 @@ func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler
 	results := make(chan Result[K], workers)
 	var wg sync.WaitGroup
 
-	// Start workers
 	for i := range workers {
 		wg.Add(1)
 		go func(workerID int) {
@@ -344,7 +329,6 @@ func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler
 		}(i)
 	}
 
-	// Cleanup goroutine - waits for workers to finish
 	go func() {
 		wg.Wait()
 		close(results)
@@ -496,7 +480,6 @@ func (pq *PriorityQueue[K, V]) dispatcher() {
 	}
 }
 
-// worker processes items from the work channel
 func (pq *PriorityQueue[K, V]) worker(ctx context.Context, handler Handler[K, V], results chan<- Result[K], workerID int) {
 	pq.log.Debug("PriorityQueue: worker", workerID, "started")
 
@@ -516,16 +499,13 @@ func (pq *PriorityQueue[K, V]) worker(ctx context.Context, handler Handler[K, V]
 	}
 }
 
-// processItem processes a single item
 func (pq *PriorityQueue[K, V]) processItem(ctx context.Context, item priorityWorkItem[K, V], handler Handler[K, V], results chan<- Result[K]) {
 	waitTime := time.Since(item.EnqueuedAt)
 
-	// Mark as in-flight
 	pq.mu.Lock()
 	pq.state[item.Key] = QueueStateInFlight
 	pq.mu.Unlock()
 
-	// Process the work
 	start := time.Now()
 	err := handler(ctx, item.Key, item.Value)
 	duration := time.Since(start)
@@ -559,7 +539,6 @@ func (pq *PriorityQueue[K, V]) processItem(ctx context.Context, item priorityWor
 		pq.log.Debug("PriorityQueue:", queueType, "item completed:", item.Key, "wait:", waitTime, "duration:", duration)
 	}
 
-	// Send result
 	select {
 	case results <- Result[K]{Key: item.Key, Error: err, Duration: duration}:
 	case <-ctx.Done():
@@ -567,7 +546,6 @@ func (pq *PriorityQueue[K, V]) processItem(ctx context.Context, item priorityWor
 	}
 }
 
-// GetState returns the current state of a queued item
 func (pq *PriorityQueue[K, V]) GetState(key K) (QueueState, bool) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
@@ -585,7 +563,6 @@ func (pq *PriorityQueue[K, V]) IsPending(key K) bool {
 	return exists && (state == QueueStatePending || state == QueueStateInFlight)
 }
 
-// IsPriority returns whether an item is in the priority queue
 func (pq *PriorityQueue[K, V]) IsPriority(key K) (bool, bool) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
@@ -594,7 +571,6 @@ func (pq *PriorityQueue[K, V]) IsPriority(key K) (bool, bool) {
 	return isPriority, exists
 }
 
-// Stats returns current statistics for both queues
 func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
@@ -610,7 +586,6 @@ func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 		FairnessRatio:     pq.fairnessRatio,
 	}
 
-	// Count states per queue
 	for key, state := range pq.state {
 		isPriority := pq.isPriority[key]
 		switch state {
@@ -632,7 +607,6 @@ func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 	return stats
 }
 
-// Size returns the total number of items across both queues
 func (pq *PriorityQueue[K, V]) Size() (priority int, normal int) {
 	return len(pq.priorityQueue), len(pq.normalQueue)
 }

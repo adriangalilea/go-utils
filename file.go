@@ -1,50 +1,61 @@
 package utils
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+)
 
 type fileOps struct{}
 
-// File provides file operations that panic on error
+// File provides file operations that panic on error.
 var File = fileOps{}
 
-// Read reads a file. Panics on error.
 func (fileOps) Read(path string) []byte {
 	data, err := os.ReadFile(path)
 	Check(err)
 	return data
 }
 
-// ReadString reads a file as a string. Panics on error.
 func (f fileOps) ReadString(path string) string {
 	return string(f.Read(path))
 }
 
-// Write writes data to a file. Panics on error.
+// Write is atomic: data lands in a temp file that is fsynced and renamed
+// over the target, so a crash mid-write leaves the old content, never a
+// truncated file. The temp file lives in the target's directory - rename
+// only guarantees atomicity within one filesystem.
 func (fileOps) Write(path string, data []byte) {
-	err := os.WriteFile(path, data, 0644)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".write-*")
 	Check(err)
+	defer os.Remove(tmp.Name()) //nolint:errcheck // no-op after successful rename
+
+	_, writeErr := tmp.Write(data)
+	syncErr := tmp.Sync()
+	Check(tmp.Close())
+	Check(writeErr)
+	Check(syncErr)
+
+	Check(os.Chmod(tmp.Name(), 0644))
+	Check(os.Rename(tmp.Name(), path))
 }
 
-// WriteString writes a string to a file. Panics on error.
 func (f fileOps) WriteString(path string, data string) {
 	f.Write(path, []byte(data))
 }
 
-// Open opens a file. Panics on error.
 func (fileOps) Open(path string) *os.File {
 	file, err := os.Open(path)
 	Check(err)
 	return file
 }
 
-// Create creates a file. Panics on error.
 func (fileOps) Create(path string) *os.File {
 	file, err := os.Create(path)
 	Check(err)
 	return file
 }
 
-// Exists checks if file exists
+// Exists is false for directories - that's Dir.Exists.
 func (fileOps) Exists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -53,14 +64,10 @@ func (fileOps) Exists(path string) bool {
 	return !info.IsDir()
 }
 
-// Remove removes a file. Panics on error.
 func (fileOps) Remove(path string) {
-	err := os.Remove(path)
-	Check(err)
+	Check(os.Remove(path))
 }
 
-// Copy copies a file. Panics on error.
 func (f fileOps) Copy(src, dst string) {
-	data := f.Read(src)
-	f.Write(dst, data)
+	f.Write(dst, f.Read(src))
 }
