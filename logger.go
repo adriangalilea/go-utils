@@ -44,18 +44,18 @@ func NewLogger(context string) *logOps {
 // If logger has a context, checks {context}_LOG_LEVEL first
 func (l *logOps) getLevel() LogLevel {
 	var level string
-	
+
 	if l.context != "" {
 		// Check context-specific level first
 		contextKey := l.context + "_LOG_LEVEL"
 		level = KEV.Get(contextKey)
 	}
-	
+
 	// If no context or context level not set, use general LOG_LEVEL
 	if level == "" {
 		level = KEV.Get("LOG_LEVEL", "info")
 	}
-	
+
 	return l.parseLevel(strings.ToLower(level))
 }
 
@@ -101,8 +101,8 @@ func (l *logOps) Warn(args ...interface{}) {
 
 // WarnOnce logs a warning only once per unique message
 func (l *logOps) WarnOnce(args ...interface{}) {
-	key := fmt.Sprint(args...)
-	
+	key := String(args...)
+
 	l.mu.Lock()
 	if _, exists := l.warnOnce[key]; exists {
 		l.mu.Unlock()
@@ -110,7 +110,7 @@ func (l *logOps) WarnOnce(args ...interface{}) {
 	}
 	l.warnOnce[key] = struct{}{}
 	l.mu.Unlock()
-	
+
 	if l.shouldLog(LogWarn) {
 		fmt.Println(Format.Warn(args...))
 	}
@@ -161,8 +161,6 @@ func (l *logOps) Trace(args ...interface{}) {
 // Bootstrap logs an indented message (for sub-steps)
 func (l *logOps) Bootstrap(args ...interface{}) {
 	if l.shouldLog(LogInfo) {
-		message := fmt.Sprintln(args...)
-		message = message[:len(message)-1] // Remove trailing newline
-		fmt.Println("   " + message)
+		fmt.Println("   " + String(args...))
 	}
 }

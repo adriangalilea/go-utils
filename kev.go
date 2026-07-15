@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-// KEV v0.0.2 - A Redis-style KV store for environment variables
+// KEV - A Redis-style KV store for environment variables
 //
 // ROADMAP: Add transparent memory encryption with ephemeral keys
 //   - All in-memory values encrypted at rest
@@ -35,15 +36,13 @@ import (
 //   kev import .env > secrets.kenv      # Encrypt from .env
 //   kev serve secrets.kenv              # HTTP server for secrets (local only)
 //
-// KEV - A Redis-style KV store for environment variables
-//
 // DEFAULT USAGE (no namespaces needed!):
 //   apiKey := KEV.MustGet("API_KEY")      // Panics if not found (required config)
 //   apiKey := KEV.Get("API_KEY")          // Returns "" if not found
 //   apiKey := KEV.Get("API_KEY", "dev")   // Returns "dev" if not found
 //   port := KEV.Int("PORT", 8080)         // With type conversion
 //   KEV.Set("DEBUG", "true")              // Sets in memory (fast)
-//   
+//
 //   KEV.Get("DATABASE_URL")               // memory → os → .env → cache result
 //   KEV.Get("DATABASE_URL")               // memory (cached!) ✓
 //
@@ -83,7 +82,7 @@ import (
 // WHY THIS IS POWERFUL:
 //   - Zero config: Works immediately with sensible defaults
 //   - Project aware: Auto-discovers project root .env (no more ../.. hell)
-//   - Test isolation: Remove "os" source for hermetic tests  
+//   - Test isolation: Remove "os" source for hermetic tests
 //   - Debug easily: KEV.All("*:*") shows everything, everywhere
 //   - Full observability: Always know where your config came from
 //   - Redis familiar: If you know Redis, you know KEV
@@ -97,42 +96,35 @@ type memEntry struct {
 type kevOps struct {
 	mu      sync.RWMutex
 	memory  map[string]memEntry
-	sources []string // Default search order for unnamespaced keys
+	sources []string  // Default search order for unnamespaced keys
 	Source  sourceOps // Source management operations
 	Debug   bool      // Enable debug logging
 }
 
-// kev provides environment variable operations with KV store semantics
-var kev = &kevOps{
+// KEV provides environment variable operations with KV store semantics
+var KEV = &kevOps{
 	memory:  make(map[string]memEntry),
 	sources: []string{"os", ".env"}, // Default sources
 	Debug:   false,
 }
 
-// KEV is the public interface for environment operations
-var KEV = kev
-
-// Initialize Source and smart defaults
-var _ = func() bool {
+// Auto-discover monorepo/project root .env files as fallback sources
+func init() {
 	KEV.Source = sourceOps{kev: KEV}
-	
-	// TODO: Reconsider this after experimentation
-	// This is NOT best practice - it adds magic behavior
-	// But I wanted the convenience of automatic project .env discovery
-	
+
 	// Check for monorepo root first (turborepo)
 	monorepoRoot := findMonorepoRoot()
 	if monorepoRoot != "" {
 		// Add monorepo root .env with highest priority (after local .env)
 		monorepoEnv := filepath.Join(monorepoRoot, ".env")
 		KEV.sources = append(KEV.sources, monorepoEnv)
-		
+
 		if KEV.Debug {
 			Log.Info("KEV", "Auto-discovered monorepo root:", monorepoRoot)
 			Log.Info("KEV", "Added monorepo .env to sources:", monorepoEnv)
 		}
 	}
-	
+
 	// Then check for project root
 	projectRoot := findProjectRoot()
 	if projectRoot != "" {
@@ -140,14 +132,14 @@ var _ = func() bool {
 		// Only add if it's different from monorepo env
 		if monorepoRoot == "" || projectEnv != filepath.Join(monorepoRoot, ".env") {
 			KEV.sources = append(KEV.sources, projectEnv)
-			
+
 			if KEV.Debug {
 				Log.Info("KEV", "Auto-discovered project root:", projectRoot)
 				Log.Info("KEV", "Added project .env to sources:", projectEnv)
 			}
 		}
 	}
-	
+
 	if KEV.Debug {
 		if monorepoRoot == "" && projectRoot == "" {
 			Log.Info("KEV", "No project or monorepo root found, using standard sources:", KEV.sources)
@@ -155,25 +147,23 @@ var _ = func() bool {
 			Log.Info("KEV", "Default sources:", KEV.sources)
 		}
 	}
-	
-	return true
-}()
+}
 
 // parseKey splits "namespace:key" or returns ("", key) for unnamespaced
 func parseKey(key string) (namespace, k string) {
 	// Check for invalid patterns
 	if strings.HasPrefix(key, ":") {
-		panic(Error("invalid key format - starts with colon:", key))
+		panic(&Panic{Message: String("invalid key format - starts with colon:", key)})
 	}
 	if strings.Contains(key, "::") {
-		panic(Error("invalid key format - double colon:", key))
+		panic(&Panic{Message: String("invalid key format - double colon:", key)})
 	}
-	
+
 	parts := strings.SplitN(key, ":", 2)
 	if len(parts) == 2 {
 		// Validate namespace and key aren't empty
 		if parts[0] == "" || parts[1] == "" {
-			panic(Error("invalid key format - empty namespace or key:", key))
+			panic(&Panic{Message: String("invalid key format - empty namespace or key:", key)})
 		}
 		return parts[0], parts[1]
 	}
@@ -183,22 +173,24 @@ func parseKey(key string) (namespace, k string) {
 // Get returns environment variable with optional default.
 //
 // Namespaced keys (direct access, no memory):
-//   KEV.Get("os:PATH")         - Direct from OS env
-//   KEV.Get(".env:API_KEY")    - Direct from .env file
+//
+//	KEV.Get("os:PATH")         - Direct from OS env
+//	KEV.Get(".env:API_KEY")    - Direct from .env file
 //
 // Unnamespaced keys (memory + source fallback):
-//   KEV.Get("API_KEY")         - Check memory, then sources
-//   KEV.Get("PORT", "8080")    - With default value
+//
+//	KEV.Get("API_KEY")         - Check memory, then sources
+//	KEV.Get("PORT", "8080")    - With default value
 func (k *kevOps) Get(key string, defaultValue ...string) string {
 	namespace, realKey := parseKey(key)
-	
+
 	// Centralized debug flag - avoid infinite recursion with LOG_LEVEL
 	debug := k.Debug && key != "LOG_LEVEL"
-	
+
 	if debug {
 		Log.Info("KEV", "Looking for", key)
 	}
-	
+
 	// Namespaced - direct access
 	if namespace != "" {
 		val := k.getFromNamespace(namespace, realKey)
@@ -220,24 +212,24 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		}
 		return ""
 	}
-	
+
 	// Unnamespaced - check memory first
 	k.mu.RLock()
 	entry, exists := k.memory[realKey]
 	sources := k.sources
 	k.mu.RUnlock()
-	
+
 	if exists {
 		if debug {
 			Log.Info("KEV", "  ✓ memory:", entry.value, "(from", entry.source+")")
 		}
 		return entry.value
 	}
-	
+
 	if debug {
 		Log.Info("KEV", "  ✗ memory: not found")
 	}
-	
+
 	// Search through sources
 	for _, source := range sources {
 		if val := k.getFromNamespace(source, realKey); val != "" {
@@ -261,7 +253,7 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 			Log.Info("KEV", "  ✗", source+":", "not found")
 		}
 	}
-	
+
 	// Use default and cache it
 	if len(defaultValue) > 0 {
 		if debug {
@@ -272,7 +264,7 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 		k.mu.Unlock()
 		return defaultValue[0]
 	}
-	
+
 	if debug {
 		Log.Info("KEV", "  → not found, returning empty")
 	}
@@ -283,13 +275,14 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 // Uses Must() internally - fail loud on missing required config.
 //
 // Examples:
-//   apiKey := KEV.MustGet("API_KEY")      // Panics if not found
-//   dbUrl := KEV.MustGet("DATABASE_URL")  // Required config
-//   path := KEV.MustGet("os:PATH")        // Must exist in OS
+//
+//	apiKey := KEV.MustGet("API_KEY")      // Panics if not found
+//	dbUrl := KEV.MustGet("DATABASE_URL")  // Required config
+//	path := KEV.MustGet("os:PATH")        // Must exist in OS
 func (k *kevOps) MustGet(key string) string {
 	val := k.Get(key)
 	if val == "" {
-		panic(Error("required key not found:", key))
+		panic(&Panic{Message: String("required key not found:", key)})
 	}
 	return val
 }
@@ -298,12 +291,13 @@ func (k *kevOps) MustGet(key string) string {
 // Returns empty string if key is not in cache.
 //
 // Examples:
-//   source := KEV.SourceOf("API_KEY")  // ".env" or "os" or "default"
-//   if source == "" { /* not cached */ }
+//
+//	source := KEV.SourceOf("API_KEY")  // ".env" or "os" or "default"
+//	if source == "" { /* not cached */ }
 func (k *kevOps) SourceOf(key string) string {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	
+
 	if entry, exists := k.memory[key]; exists {
 		return entry.source
 	}
@@ -314,8 +308,9 @@ func (k *kevOps) SourceOf(key string) string {
 // Source will be empty if value is not found.
 //
 // Examples:
-//   value, source := KEV.GetWithSource("API_KEY")
-//   fmt.Printf("API_KEY = %s (from %s)\n", value, source)
+//
+//	value, source := KEV.GetWithSource("API_KEY")
+//	fmt.Printf("API_KEY = %s (from %s)\n", value, source)
 func (k *kevOps) GetWithSource(key string, defaultValue ...string) (value, source string) {
 	value = k.Get(key, defaultValue...)
 	if value != "" {
@@ -331,37 +326,47 @@ func (k *kevOps) GetWithSource(key string, defaultValue ...string) (value, sourc
 	return value, source
 }
 
+// isFileNamespace reports whether a namespace refers to an env file
+// (.env, .env.local, ../.env, /abs/path.env, ...)
+func isFileNamespace(namespace string) bool {
+	return strings.HasPrefix(namespace, ".") || strings.Contains(namespace, "/")
+}
+
+// assertKnownNamespace screams on namespaces KEV doesn't understand -
+// a silent no-op on a typo'd namespace is how config bugs hide.
+func assertKnownNamespace(namespace string) {
+	Assert(namespace == "os" || isFileNamespace(namespace),
+		"unknown KEV namespace:", namespace, "(want \"os\" or a file path like \".env\")")
+}
+
 // getFromNamespace gets a value directly from a namespace
 func (k *kevOps) getFromNamespace(namespace, key string) string {
-	switch namespace {
-	case "os":
+	assertKnownNamespace(namespace)
+	if namespace == "os" {
 		return os.Getenv(key)
-	default:
-		// File namespace (.env, .env.local, etc)
-		if strings.HasPrefix(namespace, ".") || strings.Contains(namespace, "/") {
-			return k.getFromFile(namespace, key)
-		}
 	}
-	return ""
+	return k.getFromFile(namespace, key)
 }
 
 // Set sets environment variable.
 //
 // Namespaced (direct write):
-//   KEV.Set("os:DEBUG", "true")       - Sets in OS env
-//   KEV.Set(".env:API_KEY", "secret") - Writes to .env file
+//
+//	KEV.Set("os:DEBUG", "true")       - Sets in OS env
+//	KEV.Set(".env:API_KEY", "secret") - Writes to .env file
 //
 // Unnamespaced (memory only):
-//   KEV.Set("API_KEY", "secret")      - Sets in memory only
+//
+//	KEV.Set("API_KEY", "secret")      - Sets in memory only
 func (k *kevOps) Set(key, value string) {
 	namespace, realKey := parseKey(key)
-	
+
 	// Namespaced - direct write
 	if namespace != "" {
 		k.setToNamespace(namespace, realKey, value)
 		return
 	}
-	
+
 	// Unnamespaced - memory only
 	k.mu.Lock()
 	k.memory[realKey] = memEntry{value: value, source: "set"}
@@ -370,83 +375,54 @@ func (k *kevOps) Set(key, value string) {
 
 // setToNamespace sets a value directly to a namespace
 func (k *kevOps) setToNamespace(namespace, key, value string) {
-	switch namespace {
-	case "os":
-		err := os.Setenv(key, value)
-		Check(err)
-	default:
-		// File namespace - update or append to file
-		if strings.HasPrefix(namespace, ".") || strings.Contains(namespace, "/") {
-			k.setToFile(namespace, key, value)
-		}
+	assertKnownNamespace(namespace)
+	if namespace == "os" {
+		Check(os.Setenv(key, value))
+		return
 	}
+	k.setToFile(namespace, key, value)
 }
 
 // Has checks if key exists
 func (k *kevOps) Has(key string) bool {
 	namespace, realKey := parseKey(key)
-	
+
 	// Namespaced - check directly
 	if namespace != "" {
 		return k.hasInNamespace(namespace, realKey)
 	}
-	
+
 	// Unnamespaced - check memory then sources
 	k.mu.RLock()
 	_, exists := k.memory[realKey]
 	sources := k.sources
 	k.mu.RUnlock()
-	
+
 	if exists {
 		return true
 	}
-	
+
 	// Check sources
 	for _, source := range sources {
 		if k.hasInNamespace(source, realKey) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
-// hasInNamespace checks if key exists in namespace without reading full value
+// hasInNamespace checks if key exists in namespace, even with an empty value
 func (k *kevOps) hasInNamespace(namespace, key string) bool {
-	switch namespace {
-	case "os":
+	assertKnownNamespace(namespace)
+	if namespace == "os" {
 		_, exists := os.LookupEnv(key)
 		return exists
-	default:
-		// File namespace - still need to read file but stop early
-		if strings.HasPrefix(namespace, ".") || strings.Contains(namespace, "/") {
-			if !File.Exists(namespace) {
-				return false
-			}
-			file, err := os.Open(namespace)
-			if err != nil {
-				return false
-			}
-			defer func() { Check(file.Close()) }()
-			
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) >= 1 {
-					fileKey := strings.TrimSpace(parts[0])
-					if fileKey == key {
-						return true
-					}
-				}
-			}
-		}
 	}
-	return false
+	matches := make(map[string]string)
+	k.parseEnvFile(namespace, key, matches, true)
+	_, exists := matches[key]
+	return exists
 }
 
 // Keys returns all keys, optionally filtered by pattern
@@ -454,14 +430,14 @@ func (k *kevOps) hasInNamespace(namespace, key string) bool {
 func (k *kevOps) Keys(patterns ...string) []string {
 	var keys []string
 	seen := make(map[string]bool)
-	
+
 	if len(patterns) == 0 {
 		patterns = []string{"*"}
 	}
-	
+
 	for _, pattern := range patterns {
 		namespace, keyPattern := parseKey(pattern)
-		
+
 		if namespace != "" {
 			// Namespaced pattern
 			nsKeys := k.keysFromNamespace(namespace, keyPattern)
@@ -483,7 +459,7 @@ func (k *kevOps) Keys(patterns ...string) []string {
 			}
 			sources := k.sources
 			k.mu.RUnlock()
-			
+
 			// Also check sources
 			for _, source := range sources {
 				nsKeys := k.keysFromNamespace(source, keyPattern)
@@ -496,7 +472,7 @@ func (k *kevOps) Keys(patterns ...string) []string {
 			}
 		}
 	}
-	
+
 	return keys
 }
 
@@ -504,7 +480,7 @@ func (k *kevOps) Keys(patterns ...string) []string {
 // If keysOnly is true, returns keys as values (for backwards compat with keysFromNamespace)
 func (k *kevOps) getNamespaceData(namespace, pattern string, keysOnly bool) map[string]string {
 	result := make(map[string]string)
-	
+
 	switch namespace {
 	case "os":
 		environ := os.Environ()
@@ -514,52 +490,48 @@ func (k *kevOps) getNamespaceData(namespace, pattern string, keysOnly bool) map[
 				key := parts[0]
 				if matchPattern(key, pattern) {
 					if keysOnly {
-						result[key] = ""  // Keys only mode
+						result[key] = "" // Keys only mode
 					} else if len(parts) == 2 {
-						result[key] = parts[1]  // Full key-value mode
+						result[key] = parts[1] // Full key-value mode
 					}
 				}
 			}
 		}
 	default:
-		// File namespace
-		if strings.HasPrefix(namespace, ".") || strings.Contains(namespace, "/") {
-			k.parseEnvFile(namespace, pattern, result, keysOnly)
-		}
+		assertKnownNamespace(namespace)
+		k.parseEnvFile(namespace, pattern, result, keysOnly)
 	}
-	
+
 	return result
 }
 
-// parseEnvFile reads and parses an env file, extracting matching keys/values
+// parseEnvFile reads and parses an env file, extracting matching keys/values.
+// The single parser every file-namespace read goes through.
 func (k *kevOps) parseEnvFile(path, pattern string, result map[string]string, keysOnly bool) {
 	if !File.Exists(path) {
 		return
 	}
-	
-	file, err := os.Open(path)
-	if err != nil {
-		return
-	}
+
+	file := File.Open(path)
 	defer func() { Check(file.Close()) }()
-	
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) >= 1 {
 			key := strings.TrimSpace(parts[0])
 			if matchPattern(key, pattern) {
 				if keysOnly {
-					result[key] = ""  // Keys only mode
+					result[key] = "" // Keys only mode
 				} else if len(parts) == 2 {
 					value := strings.TrimSpace(parts[1])
 					value = strings.Trim(value, `"'`)
-					result[key] = value  // Full key-value mode
+					result[key] = value // Full key-value mode
 				}
 			}
 		}
@@ -584,23 +556,25 @@ func (k *kevOps) keysFromNamespace(namespace, pattern string) []string {
 // All returns all variables matching patterns.
 //
 // Always returns map[string]map[string]string organized by namespace:
-//   KEV.All()         // {"memory": {...}} - just memory
-//   KEV.All("API_*")  // {"memory": {...}, "os": {...}, ".env": {...}} - filtered
-//   KEV.All("os:*")   // {"os": {...}} - just os namespace
-//   KEV.All("*:*")    // {"memory": {...}, "os": {...}, ".env": {...}} - everything
+//
+//	KEV.All()         // {"memory": {...}} - just memory
+//	KEV.All("API_*")  // {"memory": {...}, "os": {...}, ".env": {...}} - filtered
+//	KEV.All("os:*")   // {"os": {...}} - just os namespace
+//	KEV.All("*:*")    // {"memory": {...}, "os": {...}, ".env": {...}} - everything
 //
 // Examples:
-//   // Debug what's loaded
-//   fmt.Println(KEV.All())
 //
-//   // Compare across namespaces
-//   all := KEV.All("*:*")
-//   if all["os"]["DEBUG"] != all[".env"]["DEBUG"] {
-//       fmt.Println("Environment mismatch!")
-//   }
+//	// Debug what's loaded
+//	fmt.Println(KEV.All())
+//
+//	// Compare across namespaces
+//	all := KEV.All("*:*")
+//	if all["os"]["DEBUG"] != all[".env"]["DEBUG"] {
+//	    fmt.Println("Environment mismatch!")
+//	}
 func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 	result := make(map[string]map[string]string)
-	
+
 	if len(patterns) == 0 {
 		// Default - return memory only with source info
 		k.mu.RLock()
@@ -608,14 +582,14 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 			memCopy := make(map[string]string)
 			for key, entry := range k.memory {
 				// Include source info in value
-				memCopy[key] = fmt.Sprintf("%s [from: %s]", entry.value, entry.source)
+				memCopy[key] = entry.value + " [from: " + entry.source + "]"
 			}
 			result["memory"] = memCopy
 		}
 		k.mu.RUnlock()
 		return result
 	}
-	
+
 	// Check if any pattern has namespace
 	hasNamespace := false
 	for _, pattern := range patterns {
@@ -624,7 +598,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 			break
 		}
 	}
-	
+
 	if !hasNamespace {
 		// No namespaces - get from memory and all sources
 		k.mu.RLock()
@@ -632,7 +606,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		for key, entry := range k.memory {
 			for _, pattern := range patterns {
 				if matchPattern(key, pattern) {
-					memMatches[key] = fmt.Sprintf("%s [from: %s]", entry.value, entry.source)
+					memMatches[key] = entry.value + " [from: " + entry.source + "]"
 					break
 				}
 			}
@@ -642,7 +616,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		}
 		sources := k.sources
 		k.mu.RUnlock()
-		
+
 		// Check all sources
 		for _, source := range sources {
 			sourceMatches := make(map[string]string)
@@ -661,7 +635,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		}
 		return result
 	}
-	
+
 	// Special case for *:* - get all namespaces
 	if len(patterns) == 1 && patterns[0] == "*:*" {
 		// Add memory
@@ -669,12 +643,12 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 		if len(k.memory) > 0 {
 			memCopy := make(map[string]string)
 			for key, entry := range k.memory {
-				memCopy[key] = fmt.Sprintf("%s [from: %s]", entry.value, entry.source)
+				memCopy[key] = entry.value + " [from: " + entry.source + "]"
 			}
 			result["memory"] = memCopy
 		}
 		k.mu.RUnlock()
-		
+
 		// Add all sources
 		k.mu.RLock()
 		sources := k.sources
@@ -702,7 +676,7 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 			}
 		}
 	}
-	
+
 	return result
 }
 
@@ -710,25 +684,26 @@ func (k *kevOps) All(patterns ...string) map[string]map[string]string {
 // For namespaced clearing, use ClearUnsafe.
 //
 // Examples:
-//   KEV.Clear()           // Clear all memory
-//   KEV.Clear("API_*")    // Clear API_* from memory only
+//
+//	KEV.Clear()           // Clear all memory
+//	KEV.Clear("API_*")    // Clear API_* from memory only
 func (k *kevOps) Clear(patterns ...string) {
 	// Only allow memory clearing for safety
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, ":") {
-			panic(Error("Clear() with namespace is dangerous! Use ClearUnsafe() if you really need this."))
+			panic(&Panic{Message: String("Clear() with namespace is dangerous! Use ClearUnsafe() if you really need this.")})
 		}
 	}
-	
+
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	
+
 	if len(patterns) == 0 {
 		// Clear all memory
 		k.memory = make(map[string]memEntry)
 		return
 	}
-	
+
 	// Clear patterns from memory only
 	for _, pattern := range patterns {
 		for key := range k.memory {
@@ -743,22 +718,23 @@ func (k *kevOps) Clear(patterns ...string) {
 // Required for operations that modify OS env or files.
 //
 // Examples:
-//   KEV.ClearUnsafe("os:TEMP_*")     // Remove TEMP_* from OS
-//   KEV.ClearUnsafe("os:DEBUG")      // Remove specific OS var
+//
+//	KEV.ClearUnsafe("os:TEMP_*")     // Remove TEMP_* from OS
+//	KEV.ClearUnsafe("os:DEBUG")      // Remove specific OS var
 func (k *kevOps) ClearUnsafe(patterns ...string) {
 	for _, pattern := range patterns {
 		namespace, keyPattern := parseKey(pattern)
-		
+
 		if namespace == "" {
 			// No namespace - just use regular Clear
 			k.Clear(pattern)
 			continue
 		}
-		
+
 		switch namespace {
 		case "os":
 			if keyPattern == "*" {
-				panic(Error("ClearUnsafe(\"os:*\") would destroy system! This is never allowed."))
+				panic(&Panic{Message: String("ClearUnsafe(\"os:*\") would destroy system! This is never allowed.")})
 			}
 			keys := k.keysFromNamespace("os", keyPattern)
 			for _, key := range keys {
@@ -766,7 +742,7 @@ func (k *kevOps) ClearUnsafe(patterns ...string) {
 			}
 		default:
 			// File namespace - would need to rewrite file
-			panic(Error("Clearing from files not yet implemented"))
+			panic(&Panic{Message: String("Clearing from files not yet implemented")})
 		}
 	}
 }
@@ -775,7 +751,7 @@ func (k *kevOps) ClearUnsafe(patterns ...string) {
 func (k *kevOps) Unset(keys ...string) {
 	for _, key := range keys {
 		namespace, realKey := parseKey(key)
-		
+
 		if namespace != "" {
 			// Namespaced unset
 			switch namespace {
@@ -783,7 +759,7 @@ func (k *kevOps) Unset(keys ...string) {
 				Check(os.Unsetenv(realKey))
 			default:
 				// File - would need to rewrite file
-				panic(Error("Unsetting from files not yet implemented"))
+				panic(&Panic{Message: String("Unsetting from files not yet implemented")})
 			}
 		} else {
 			// Unnamespaced - remove from memory
@@ -798,17 +774,18 @@ func (k *kevOps) Unset(keys ...string) {
 // Panics on invalid format (offensive programming - fail loud on bad data).
 //
 // Example:
-//   port := KEV.Int("PORT", 8080)
-//   workers := KEV.Int("os:WORKERS", 4)
+//
+//	port := KEV.Int("PORT", 8080)
+//	workers := KEV.Int("os:WORKERS", 4)
 func (k *kevOps) Int(key string, defaultValue int) int {
 	val := k.Get(key)
 	if val == "" {
 		return defaultValue
 	}
-	
+
 	i, err := strconv.Atoi(val)
 	if err != nil {
-		panic(Error("invalid int value for", key, ":", val))
+		panic(&Panic{Message: String("invalid int value for", key, ":", val)})
 	}
 	return i
 }
@@ -820,14 +797,14 @@ func (k *kevOps) Bool(key string, defaultValue bool) bool {
 	if val == "" {
 		return defaultValue
 	}
-	
+
 	switch val {
 	case "true", "1", "yes", "on":
 		return true
 	case "false", "0", "no", "off":
 		return false
 	default:
-		panic(Error("invalid bool value for", key, ":", val))
+		panic(&Panic{Message: String("invalid bool value for", key, ":", val)})
 	}
 }
 
@@ -837,15 +814,17 @@ func (k *kevOps) Duration(key string, defaultValue time.Duration) time.Duration 
 	if val == "" {
 		return defaultValue
 	}
-	
+
 	d, err := time.ParseDuration(val)
 	if err != nil {
-		panic(Error("invalid duration value for", key, ":", val))
+		panic(&Panic{Message: String("invalid duration value for", key, ":", val)})
 	}
 	return d
 }
 
-// Export saves all memory variables to a file
+// Export saves all memory variables to a file.
+// Source info goes on its own comment line - inline comments would be
+// read back as part of the value by any env parser, including KEV's own.
 func (k *kevOps) Export(path string) {
 	k.mu.RLock()
 	var lines []string
@@ -855,28 +834,27 @@ func (k *kevOps) Export(path string) {
 		if strings.ContainsAny(val, " \t\n\"'") {
 			val = fmt.Sprintf("%q", val)
 		}
-		// Add comment with source info
-		lines = append(lines, fmt.Sprintf("%s=%s  # from: %s", key, val, entry.source))
+		lines = append(lines, "# from: "+entry.source, key+"="+val)
 	}
 	k.mu.RUnlock()
-	
-	content := strings.Join(lines, "\n")
+
+	content := strings.Join(lines, "\n") + "\n"
 	File.Write(path, []byte(content))
 }
 
 // Dump prints all environment variables (masks sensitive keys)
 func (k *kevOps) Dump() {
 	all := k.All()
-	
+
 	// Always a nested map now
 	for namespace, vars := range all {
 		for key, val := range vars {
 			// Mask sensitive values
 			lower := strings.ToLower(key)
-			if strings.Contains(lower, "key") || 
-			   strings.Contains(lower, "secret") || 
-			   strings.Contains(lower, "password") || 
-			   strings.Contains(lower, "token") {
+			if strings.Contains(lower, "key") ||
+				strings.Contains(lower, "secret") ||
+				strings.Contains(lower, "password") ||
+				strings.Contains(lower, "token") {
 				if len(val) > 4 {
 					val = val[:4] + "****"
 				} else {
@@ -894,17 +872,18 @@ func (k *kevOps) Dump() {
 // Default: ["os", ".env"]
 //
 // Examples:
-//   // Remove OS for testing
-//   KEV.Source.Remove("os")
-//   KEV.Get("PATH")  // Now only checks memory → .env
 //
-//   // Add more sources
-//   KEV.Source.Add(".env.local", ".env.production")
-//   KEV.Get("API_KEY")  // Checks: memory → os → .env → .env.local → .env.production
+//	// Remove OS for testing
+//	KEV.Source.Remove("os")
+//	KEV.Get("PATH")  // Now only checks memory → .env
 //
-//   // Replace entirely
-//   KEV.Source.Set(".env.test")
-//   KEV.Get("API_KEY")  // Only checks memory → .env.test
+//	// Add more sources
+//	KEV.Source.Add(".env.local", ".env.production")
+//	KEV.Get("API_KEY")  // Checks: memory → os → .env → .env.local → .env.production
+//
+//	// Replace entirely
+//	KEV.Source.Set(".env.test")
+//	KEV.Get("API_KEY")  // Only checks memory → .env.test
 type sourceOps struct {
 	kev *kevOps
 }
@@ -927,7 +906,7 @@ func (s sourceOps) Add(sources ...string) {
 func (s sourceOps) Remove(sources ...string) {
 	s.kev.mu.Lock()
 	defer s.kev.mu.Unlock()
-	
+
 	newSources := []string{}
 	for _, existing := range s.kev.sources {
 		remove := false
@@ -948,7 +927,7 @@ func (s sourceOps) Remove(sources ...string) {
 func (s sourceOps) List() []string {
 	s.kev.mu.RLock()
 	defer s.kev.mu.RUnlock()
-	
+
 	result := make([]string, len(s.kev.sources))
 	copy(result, s.kev.sources)
 	return result
@@ -961,37 +940,11 @@ func (s sourceOps) Clear() {
 	s.kev.sources = []string{}
 }
 
-// getFromFile reads a specific key from a file
+// getFromFile reads a specific key from a file (last occurrence wins)
 func (k *kevOps) getFromFile(path string, key string) string {
-	if !File.Exists(path) {
-		return ""
-	}
-	
-	file, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer func() { Check(file.Close()) }()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			fileKey := strings.TrimSpace(parts[0])
-			if fileKey == key {
-				value := strings.TrimSpace(parts[1])
-				// Remove quotes if present
-				value = strings.Trim(value, `"'`)
-				return value
-			}
-		}
-	}
-	return ""
+	matches := make(map[string]string)
+	k.parseEnvFile(path, key, matches, false)
+	return matches[key]
 }
 
 // setToFile writes or updates a key in a file
@@ -999,20 +952,20 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 	// Read existing content
 	var lines []string
 	found := false
-	
+
 	if File.Exists(path) {
 		content := File.Read(path)
 		scanner := bufio.NewScanner(strings.NewReader(string(content)))
 		for scanner.Scan() {
 			line := scanner.Text()
 			trimmed := strings.TrimSpace(line)
-			
+
 			// Skip empty and comments
 			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 				lines = append(lines, line)
 				continue
 			}
-			
+
 			// Check if this is the key we're updating
 			parts := strings.SplitN(trimmed, "=", 2)
 			if len(parts) >= 1 {
@@ -1022,7 +975,7 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 					if strings.ContainsAny(value, " \t\n\"'") {
 						value = fmt.Sprintf("%q", value)
 					}
-					lines = append(lines, fmt.Sprintf("%s=%s", key, value))
+					lines = append(lines, key+"="+value)
 					found = true
 				} else {
 					lines = append(lines, line)
@@ -1032,38 +985,24 @@ func (k *kevOps) setToFile(path string, key string, value string) {
 			}
 		}
 	}
-	
+
 	// If key wasn't found, append it
 	if !found {
 		if strings.ContainsAny(value, " \t\n\"'") {
 			value = fmt.Sprintf("%q", value)
 		}
-		lines = append(lines, fmt.Sprintf("%s=%s", key, value))
+		lines = append(lines, key+"="+value)
 	}
-	
+
 	// Write back
 	content := strings.Join(lines, "\n")
 	File.Write(path, []byte(content))
 }
 
-// matchPattern matches a key against a pattern (supports * wildcard)
+// matchPattern matches a key against a glob pattern (*, ?, [...]).
+// Panics on malformed patterns - a bad pattern is a bug, not a miss.
 func matchPattern(key, pattern string) bool {
-	if pattern == "*" {
-		return true
-	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(key, prefix)
-	}
-	if strings.HasPrefix(pattern, "*") {
-		suffix := pattern[1:]
-		return strings.HasSuffix(key, suffix)
-	}
-	if strings.Contains(pattern, "*") {
-		parts := strings.Split(pattern, "*")
-		if len(parts) == 2 {
-			return strings.HasPrefix(key, parts[0]) && strings.HasSuffix(key, parts[1])
-		}
-	}
-	return key == pattern
+	matched, err := path.Match(pattern, key)
+	Check(err, "invalid KEV pattern:", pattern)
+	return matched
 }

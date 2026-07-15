@@ -85,9 +85,9 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 		}
 		return 2
 	}
-	
+
 	absValue := math.Abs(value)
-	
+
 	// Special handling for specific currencies
 	switch currencyCode {
 	case "BTC", "XBT":
@@ -107,7 +107,7 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 		} else {
 			return 4
 		}
-		
+
 	case "ETH":
 		// Ethereum needs good precision
 		if absValue < 0.001 {
@@ -121,7 +121,7 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 		} else {
 			return 4
 		}
-		
+
 	case "USD", "USDT", "USDC", "DAI", "BUSD":
 		// USD and stablecoins
 		if absValue < 0.01 {
@@ -130,12 +130,9 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 			return 4
 		} else if absValue < 1 {
 			return 3
-		} else if absValue < 1000 {
-			return 2
-		} else {
-			return 2
 		}
-		
+		return 2
+
 	case "EUR", "GBP", "CAD", "AUD", "CHF":
 		// Major fiat currencies
 		if absValue < 0.01 {
@@ -145,7 +142,7 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 		} else {
 			return 0
 		}
-		
+
 	case "JPY", "KRW":
 		// Currencies typically without decimals
 		if absValue < 1 {
@@ -154,7 +151,7 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 			return 0
 		}
 	}
-	
+
 	// Default logic for other currencies/values
 	if c.IsCrypto(currencyCode) {
 		// Crypto defaults
@@ -166,37 +163,31 @@ func (c *currencyOps) GetOptimalDecimals(value float64, currencyCode string) int
 			return 5
 		} else if absValue < 0.01 {
 			return 4
-		} else if absValue < 0.1 {
-			return 3
 		} else if absValue < 1 {
 			return 3
 		} else if absValue < 100 {
 			return 2
-		} else {
-			return 0
 		}
-	} else {
-		// Fiat defaults
-		if absValue < 0.01 {
-			return 4
-		} else if absValue < 0.1 {
-			return 3
-		} else if absValue < 1000 {
-			return 2
-		} else if absValue < 100000 {
-			return 0
-		} else {
-			return 0
-		}
+		return 0
 	}
+
+	// Fiat defaults
+	if absValue < 0.01 {
+		return 4
+	} else if absValue < 0.1 {
+		return 3
+	} else if absValue < 1000 {
+		return 2
+	}
+	return 0
 }
 
 // IsCrypto returns true if the currency code is a known cryptocurrency
 func (c *currencyOps) IsCrypto(code string) bool {
 	switch code {
-	case "BTC", "XBT", "ETH", "BNB", "XRP", "ADA", "DOGE", "SOL", "DOT", "MATIC", 
-		 "SHIB", "TRX", "AVAX", "UNI", "ATOM", "LINK", "XMR", "XLM", "ALGO", "VET", 
-		 "MANA", "SAND", "AXS", "THETA", "FTM", "NEAR", "HNT", "GRT", "ENJ", "CHZ":
+	case "BTC", "XBT", "ETH", "BNB", "XRP", "ADA", "DOGE", "SOL", "DOT", "MATIC",
+		"SHIB", "TRX", "AVAX", "UNI", "ATOM", "LINK", "XMR", "XLM", "ALGO", "VET",
+		"MANA", "SAND", "AXS", "THETA", "FTM", "NEAR", "HNT", "GRT", "ENJ", "CHZ":
 		return true
 	default:
 		return false
@@ -217,8 +208,8 @@ func (c *currencyOps) IsStablecoin(code string) bool {
 func (c *currencyOps) IsFiat(code string) bool {
 	switch code {
 	case "USD", "EUR", "GBP", "JPY", "CNY", "CAD", "AUD", "CHF", "HKD", "SGD",
-		 "NZD", "KRW", "SEK", "NOK", "DKK", "PLN", "THB", "INR", "RUB", "TRY",
-		 "BRL", "MXN", "ARS", "CLP", "COP", "PEN", "UYU", "ZAR", "NGN", "KES":
+		"NZD", "KRW", "SEK", "NOK", "DKK", "PLN", "THB", "INR", "RUB", "TRY",
+		"BRL", "MXN", "ARS", "CLP", "COP", "PEN", "UYU", "ZAR", "NGN", "KES":
 		return true
 	default:
 		return false
@@ -261,7 +252,7 @@ func (c *currencyOps) PercentageDiff(a, b float64) float64 {
 	if avg == 0 {
 		return 0
 	}
-	return (math.Abs(a - b) / avg) * 100
+	return (math.Abs(a-b) / avg) * 100
 }
 
 // BasisPointsToPercent converts basis points to percentage (100 bps = 1%)

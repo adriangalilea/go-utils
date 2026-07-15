@@ -12,8 +12,10 @@ Key characteristics:
   - Configurable fairness ratio prevents monopolization
   - Shared deduplication across both queues
   - Unified state tracking for all items
-  - Queue starts automatically and runs until stopped
+  - Dispatcher starts on the first Process() call and runs until stopped
   - Multiple Process() calls can share the same queue
+  - Min-wait throttle: the same key is never dispatched twice within
+    MinWait (default 30s) - tune with SetMinWait
 
 Skip-based backoff:
   - Items can be enqueued with a skip count
@@ -30,26 +32,26 @@ Example usage:
 		2,    // Fairness ratio
 	)
 	defer pq.Stop()  // Stop queue when done
-	
+
 	// Start workers with fair processing
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	results := pq.Process(ctx, 5, func(ctx context.Context, nodeID string, work ConnWork) error {
 		// Priority items attempted first, but fairness ensures normal items run too
 		return connectToNode(ctx, nodeID, work)
 	})
-	
+
 	// Enqueue work - priority is permanent
 	if node.Critical {
 		pq.TryEnqueue(node.ID, work, true)   // Always stays priority
 	} else {
 		pq.TryEnqueue(node.ID, work, false)  // Always stays normal
 	}
-	
+
 	// Enqueue with backoff after failure
 	if connectionFailed {
 		pq.TryEnqueue(node.ID, work, isPriority, node.ConsecutiveFailures)  // Linear backoff
 	}
-	
+
 	// Consume results
 	for result := range results {
 		// Handle result
@@ -63,16 +65,12 @@ When to use PriorityQueue vs Queue:
   - Use regular Queue for simple FIFO with deduplication
   - Use regular Queue when all work has equal priority
 
-Performance characteristics:
-  - O(1) enqueue/dequeue operations
-  - O(1) deduplication check
-  - O(1) skip handling (re-enqueue at back)
-  - Fair scheduling overhead is negligible
-  - Memory: ~200 bytes per item + dual channel buffers
-  - Fairness guarantee: Exactly fairnessRatio priority items before forcing normal
+Logging goes through a KEV-driven logger: set PRIORITY_QUEUE_LOG_LEVEL
+(or LOG_LEVEL) to debug/trace to watch the dispatcher work.
 
 Lifecycle:
-  - Queue and dispatcher start immediately on creation
+  - The dispatcher starts on the first Process() call - enqueued items
+    sit untouched in their queues until there are workers
   - Multiple Process() calls share the same dispatcher
   - Stop() must be called to clean up resources
 */
@@ -91,19 +89,19 @@ type PriorityQueueStats struct {
 	// Queue sizes
 	PriorityQueueSize int
 	NormalQueueSize   int
-	
+
 	// State counts
-	PriorityPending  int
-	NormalPending    int
-	InFlight         int
-	Completed        int
-	Failed           int
-	
+	PriorityPending int
+	NormalPending   int
+	InFlight        int
+	Completed       int
+	Failed          int
+
 	// Totals
-	TotalEnqueued    int64
-	TotalProcessed   int64
-	TotalFailed      int64
-	
+	TotalEnqueued  int64
+	TotalProcessed int64
+	TotalFailed    int64
+
 	// Fairness metrics
 	PriorityProcessed int64
 	NormalProcessed   int64
@@ -114,41 +112,41 @@ type PriorityQueueStats struct {
 type PriorityQueue[K comparable, V any] struct {
 	// Synchronization
 	mu sync.RWMutex
-	
+
 	// Dual input queues - items never move between them
 	priorityQueue chan priorityQueueItem[K, V]
 	normalQueue   chan priorityQueueItem[K, V]
-	
+
 	// Single output channel for workers (fed by dispatcher)
-	workChannel   chan priorityWorkItem[K, V]
-	
+	workChannel chan priorityWorkItem[K, V]
+
 	// Shared state across both queues
-	state       map[K]QueueState
-	isPriority  map[K]bool      // Track which queue an item belongs to
-	completedAt map[K]time.Time
-	
+	state      map[K]QueueState
+	isPriority map[K]bool      // Track which queue an item belongs to
+	doneAt     map[K]time.Time // terminal (completed/failed) timestamps, for pruning
+
 	// Min-wait protection to prevent rapid cycling
-	lastSentToWorker map[K]time.Time  // Track when item was last sent to workers
-	minWait          time.Duration    // Minimum wait between sending same item to workers
-	
+	lastSentToWorker map[K]time.Time // Track when item was last sent to workers
+	minWait          time.Duration   // Minimum wait between sending same item to workers
+
 	// Fairness control
-	fairnessRatio int  // e.g., 2 = process 2 priority per 1 normal
-	
+	fairnessRatio int // e.g., 2 = process 2 priority per 1 normal
+
 	// Configuration
 	maxCompleted int
-	metrics      QueueMetrics
-	logger       Logger
-	pqLog        *logOps  // Priority queue specific logger
-	
+	log          *logOps
+
 	// Runtime stats
-	totalEnqueued      atomic.Int64
-	totalProcessed     atomic.Int64
-	totalFailed        atomic.Int64
-	priorityProcessed  atomic.Int64
-	normalProcessed    atomic.Int64
-	
-	// Dispatcher lifecycle (permanent)
+	totalEnqueued     atomic.Int64
+	totalProcessed    atomic.Int64
+	totalFailed       atomic.Int64
+	priorityProcessed atomic.Int64
+	normalProcessed   atomic.Int64
+
+	// Dispatcher lifecycle - starts lazily on first Process() so
+	// enqueued items sit untouched in their queues until there are workers
 	running          atomic.Bool
+	dispatchOnce     sync.Once
 	dispatcherCtx    context.Context
 	dispatcherCancel context.CancelFunc
 	dispatcherDone   chan struct{}
@@ -158,7 +156,7 @@ type PriorityQueue[K comparable, V any] struct {
 type priorityQueueItem[K comparable, V any] struct {
 	Key        K
 	Value      V
-	SkipCount  int       // How many times to skip before processing (0 = process immediately)
+	SkipCount  int // How many times to skip before processing (0 = process immediately)
 	EnqueuedAt time.Time
 }
 
@@ -169,43 +167,36 @@ type priorityWorkItem[K comparable, V any] struct {
 }
 
 // NewPriorityQueue creates and starts a new priority queue with specified sizes and fairness ratio
-func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRatio int, opts ...Option[K, V]) *PriorityQueue[K, V] {
+func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRatio int) *PriorityQueue[K, V] {
+	Assert(prioritySize > 0 && normalSize > 0, "queue sizes must be positive:", prioritySize, normalSize)
 	if fairnessRatio < 1 {
 		fairnessRatio = 1 // Minimum 1:1 fairness
 	}
-	
+
 	// Work channel size should accommodate both queues
 	workChannelSize := (prioritySize + normalSize) / 2
 	if workChannelSize < 10 {
 		workChannelSize = 10
 	}
-	
+
 	pq := &PriorityQueue[K, V]{
 		priorityQueue:    make(chan priorityQueueItem[K, V], prioritySize),
 		normalQueue:      make(chan priorityQueueItem[K, V], normalSize),
 		workChannel:      make(chan priorityWorkItem[K, V], workChannelSize),
 		state:            make(map[K]QueueState),
 		isPriority:       make(map[K]bool),
-		completedAt:      make(map[K]time.Time),
+		doneAt:           make(map[K]time.Time),
 		lastSentToWorker: make(map[K]time.Time),
 		minWait:          30 * time.Second, // Default 30 seconds min-wait
 		fairnessRatio:    fairnessRatio,
 		maxCompleted:     1000, // Default
 		dispatcherDone:   make(chan struct{}),
-		pqLog:            NewLogger("PRIORITY_QUEUE"),
+		log:              NewLogger("PRIORITY_QUEUE"),
 	}
-	
-	// Apply options (reuse from queue.go)
-	for _, opt := range opts {
-		opt((*Queue[K, V])(nil)) // Type assertion workaround
-		// In practice, we'd need PriorityQueueOption type
-	}
-	
-	// Start dispatcher immediately
+
 	pq.dispatcherCtx, pq.dispatcherCancel = context.WithCancel(context.Background())
 	pq.running.Store(true)
-	go pq.dispatcher()
-	
+
 	return pq
 }
 
@@ -221,23 +212,19 @@ func (pq *PriorityQueue[K, V]) Stop() {
 	if !pq.running.CompareAndSwap(true, false) {
 		return // Already stopped
 	}
-	
-	pq.pqLog.Info("PriorityQueue: stopping dispatcher")
-	if pq.logger != nil {
-		pq.logger.Info("PriorityQueue: stopping dispatcher")
-	}
-	
-	// Stop dispatcher
+
+	pq.log.Debug("PriorityQueue: stopping dispatcher")
+
+	// Stop dispatcher. If it never started (no Process() call), the Once
+	// closes dispatcherDone so the wait below returns immediately.
 	pq.dispatcherCancel()
-	<-pq.dispatcherDone  // Wait for dispatcher to finish
-	
+	pq.dispatchOnce.Do(func() { close(pq.dispatcherDone) })
+	<-pq.dispatcherDone // Wait for dispatcher to finish
+
 	// Close work channel to signal any remaining workers
 	close(pq.workChannel)
-	
-	pq.pqLog.Info("PriorityQueue: stopped")
-	if pq.logger != nil {
-		pq.logger.Info("PriorityQueue: stopped")
-	}
+
+	pq.log.Debug("PriorityQueue: stopped")
 }
 
 // TryEnqueue attempts to enqueue work to the appropriate queue based on priority
@@ -250,82 +237,105 @@ func (pq *PriorityQueue[K, V]) TryEnqueue(key K, value V, isPriority bool, skipC
 	if !pq.running.Load() {
 		return QueueFull // Queue is stopped
 	}
-	
+
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	
+
 	// Check if already pending or in-flight (dedup across both queues)
 	if state, exists := pq.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
-		pq.pqLog.Debug("PriorityQueue: item already ", state, ": ", key)
-		if pq.logger != nil {
-			pq.logger.Debug("PriorityQueue: item already ", state, ": ", key)
-		}
-		if pq.metrics != nil {
-			pq.metrics.RecordEnqueue(false)
-		}
+		pq.log.Debug("PriorityQueue: item already", state, ":", key)
 		return AlreadyQueued
 	}
-	
+
 	// Mark as pending and remember which queue
-	oldState := pq.state[key]
+	oldState, hadState := pq.state[key]
 	pq.state[key] = QueueStatePending
 	pq.isPriority[key] = isPriority
-	
+
 	// Try non-blocking send to appropriate queue
 	item := priorityQueueItem[K, V]{Key: key, Value: value, SkipCount: skip, EnqueuedAt: time.Now()}
-	
-	var targetQueue chan priorityQueueItem[K, V]
-	var queueName string
+
+	targetQueue := pq.normalQueue
+	queueName := "normal"
 	if isPriority {
 		targetQueue = pq.priorityQueue
 		queueName = "priority"
-	} else {
-		targetQueue = pq.normalQueue
-		queueName = "normal"
 	}
-	
+
 	select {
 	case targetQueue <- item:
 		pq.totalEnqueued.Add(1)
-		if pq.metrics != nil {
-			pq.metrics.RecordEnqueue(true)
-			if oldState != QueueStatePending {
-				pq.metrics.RecordStateChange(oldState, QueueStatePending)
-			}
-		}
-		pq.pqLog.Debug("PriorityQueue: enqueued item to ", queueName, " queue: ", key)
-		if pq.logger != nil {
-			pq.logger.Debug("PriorityQueue: enqueued item to ", queueName, " queue: ", key)
-		}
+		pq.log.Debug("PriorityQueue: enqueued item to", queueName, "queue:", key)
 		return Enqueued
 	default:
 		// Queue full - rollback
-		if oldState == 0 {
+		if hadState {
+			pq.state[key] = oldState
+		} else {
 			delete(pq.state, key)
 			delete(pq.isPriority, key)
-		} else {
-			pq.state[key] = oldState
 		}
-		if pq.metrics != nil {
-			pq.metrics.RecordEnqueue(false)
-		}
-		pq.pqLog.Debug("PriorityQueue: ", queueName, " queue full, cannot enqueue: ", key)
-		if pq.logger != nil {
-			pq.logger.Debug("PriorityQueue: ", queueName, " queue full, cannot enqueue: ", key)
-		}
+		pq.log.Debug("PriorityQueue:", queueName, "queue full, cannot enqueue:", key)
 		return QueueFull
 	}
 }
 
-// Process starts workers that process items from the work channel
-func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler Handler[K, V]) <-chan Result[K] {
+// MustEnqueue enqueues work, blocking if the appropriate queue is full
+func (pq *PriorityQueue[K, V]) MustEnqueue(ctx context.Context, key K, value V, isPriority bool) error {
 	if !pq.running.Load() {
-		panic("cannot process on stopped queue")
+		return fmt.Errorf("queue is stopped")
 	}
-	
+
+	pq.mu.Lock()
+
+	// Check if already pending or in-flight
+	if state, exists := pq.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
+		pq.mu.Unlock()
+		pq.log.Debug("PriorityQueue: item already", state, ", skipping:", key)
+		return nil // Already queued, not an error
+	}
+
+	// Mark as pending
+	oldState, hadState := pq.state[key]
+	pq.state[key] = QueueStatePending
+	pq.isPriority[key] = isPriority
+	pq.mu.Unlock()
+
+	// Select appropriate queue
+	targetQueue := pq.normalQueue
+	if isPriority {
+		targetQueue = pq.priorityQueue
+	}
+
+	// Blocking send
+	select {
+	case targetQueue <- priorityQueueItem[K, V]{Key: key, Value: value, SkipCount: 0, EnqueuedAt: time.Now()}:
+		pq.totalEnqueued.Add(1)
+		return nil
+	case <-ctx.Done():
+		// Rollback on context cancellation
+		pq.mu.Lock()
+		if hadState {
+			pq.state[key] = oldState
+		} else {
+			delete(pq.state, key)
+			delete(pq.isPriority, key)
+		}
+		pq.mu.Unlock()
+		return ctx.Err()
+	}
+}
+
+// Process starts workers that process items from the work channel.
+// The first call also starts the shared dispatcher.
+func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler Handler[K, V]) <-chan Result[K] {
+	Assert(pq.running.Load(), "cannot process on stopped queue")
+
+	pq.dispatchOnce.Do(func() { go pq.dispatcher() })
+
 	results := make(chan Result[K], workers)
 	var wg sync.WaitGroup
-	
+
 	// Start workers
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -334,248 +344,174 @@ func (pq *PriorityQueue[K, V]) Process(ctx context.Context, workers int, handler
 			pq.worker(ctx, handler, results, workerID)
 		}(i)
 	}
-	
+
 	// Cleanup goroutine - waits for workers to finish
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
-	
+
 	return results
 }
 
-// dispatcher implements the fair scheduling algorithm
+// reEnqueue puts an item back at the end of the queue it came from.
+// If that queue is meanwhile full the item is dropped - state is cleared
+// so the key can be enqueued again instead of staying Pending forever.
+func (pq *PriorityQueue[K, V]) reEnqueue(item priorityQueueItem[K, V], fromPriority bool, reason string) {
+	targetQueue := pq.normalQueue
+	queueName := "normal"
+	if fromPriority {
+		targetQueue = pq.priorityQueue
+		queueName = "priority"
+	}
+
+	select {
+	case targetQueue <- item:
+		pq.log.Trace("PriorityQueue: re-enqueued", queueName, "item", item.Key, "-", reason)
+	default:
+		pq.mu.Lock()
+		delete(pq.state, item.Key)
+		delete(pq.isPriority, item.Key)
+		pq.mu.Unlock()
+		pq.log.Error("PriorityQueue: dropped", queueName, "item", item.Key, "-", queueName, "queue full while re-enqueueing for", reason)
+	}
+}
+
+// reEnqueueTick paces the dispatcher when a full lap produced only
+// re-enqueues (skips / min-wait): without it the loop spins at 100% CPU
+// and burns skip counts in microseconds on an otherwise idle queue.
+const reEnqueueTick = 25 * time.Millisecond
+
+// dispatcher implements the fair scheduling algorithm.
+// Only items actually sent to workers count toward fairness -
+// skipped and min-waiting items don't.
 func (pq *PriorityQueue[K, V]) dispatcher() {
 	defer close(pq.dispatcherDone)
-	
-	if pq.logger != nil {
-		pq.logger.Debug("PriorityQueue: dispatcher started with fairness ratio %d:1", pq.fairnessRatio)
-	}
-	
-	// Track items SENT TO WORKERS from each queue for fairness (not skipped items)
+
+	pq.log.Debug("PriorityQueue: dispatcher started with fairness ratio", pq.fairnessRatio, "to 1")
+
 	priorityTaken := 0
 	normalTaken := 0
-	dispatcherCycles := 0
-	
+	lapReEnqueues := 0
+
+	pace := func() {
+		lapReEnqueues++
+		if lapReEnqueues >= len(pq.priorityQueue)+len(pq.normalQueue) {
+			time.Sleep(reEnqueueTick)
+			lapReEnqueues = 0
+		}
+	}
+
 	for {
+		// Items cycling through skip/min-wait re-enqueues keep the loop busy
+		// without ever reaching the blocking select below - check for
+		// cancellation explicitly so Stop() never has to wait for them
 		select {
 		case <-pq.dispatcherCtx.Done():
-			pq.pqLog.Trace("[Dispatcher] Context done at start of loop, stopping after ", dispatcherCycles, " cycles")
-			if pq.logger != nil {
-				pq.logger.Debug("PriorityQueue: dispatcher stopped after %d cycles", dispatcherCycles)
-			}
+			pq.log.Debug("PriorityQueue: dispatcher stopped")
 			return
 		default:
 		}
-		
-		dispatcherCycles++
-		pq.pqLog.Trace("[Dispatcher] Starting cycle ", dispatcherCycles)
-		
-		// Determine what we MUST take for fairness
-		mustTakeNormal := priorityTaken >= pq.fairnessRatio && normalTaken == 0
-		pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Fairness check: P=", priorityTaken, " N=", normalTaken, ", mustTakeNormal=", mustTakeNormal)
-		
+
+		// After fairnessRatio priority items with no normal item, normal goes first.
+		// A blocking select picks RANDOMLY among ready cases, so real preference
+		// needs a non-blocking grab from the preferred queue first.
+		preferNormal := priorityTaken >= pq.fairnessRatio && normalTaken == 0
+
 		var item priorityQueueItem[K, V]
 		var fromPriority bool
-		var gotItem bool
-		
-		if mustTakeNormal {
-			// PREFER normal queue for fairness, but don't block if only priority has items
-			pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Preferring normal queue for fairness")
+
+		preferred, other := pq.priorityQueue, pq.normalQueue
+		if preferNormal {
+			preferred, other = pq.normalQueue, pq.priorityQueue
+		}
+
+		select {
+		case item = <-preferred:
+			fromPriority = !preferNormal
+		default:
 			select {
-			case item = <-pq.normalQueue:
-				fromPriority = false
-				gotItem = true
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from normal queue")
-			case item = <-pq.priorityQueue:
-				// Normal queue empty, take from priority instead
-				fromPriority = true
-				gotItem = true
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Normal queue empty, taking from priority queue instead")
+			case item = <-preferred:
+				fromPriority = !preferNormal
+			case item = <-other:
+				fromPriority = preferNormal
 			case <-pq.dispatcherCtx.Done():
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Context done while waiting")
-				return
-			}
-		} else {
-			// Can take from either, prefer priority
-			pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Waiting for items from either queue (prefer priority)...")
-			select {
-			case item = <-pq.priorityQueue:
-				fromPriority = true
-				gotItem = true
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from priority queue")
-			case item = <-pq.normalQueue:
-				fromPriority = false
-				gotItem = true
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got item from normal queue")
-			case <-pq.dispatcherCtx.Done():
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Context done, stopping dispatcher")
+				pq.log.Debug("PriorityQueue: dispatcher stopped")
 				return
 			}
 		}
-		
-		// Process the item we got
-		if gotItem {
-			queueName := "normal"
+
+		queueName := "normal"
+		if fromPriority {
+			queueName = "priority"
+		}
+		pq.log.Trace("PriorityQueue: dispatching", queueName, "item", item.Key, "- skips:", item.SkipCount)
+
+		// Skip-based backoff: decrement and send to the back of its queue
+		if item.SkipCount > 0 {
+			item.SkipCount--
+			pq.reEnqueue(item, fromPriority, "skip backoff")
+			pace()
+			continue
+		}
+
+		// Min-wait: don't hammer the same key
+		pq.mu.RLock()
+		lastSent, hasLastSent := pq.lastSentToWorker[item.Key]
+		minWait := pq.minWait
+		pq.mu.RUnlock()
+
+		if hasLastSent {
+			remaining := minWait - time.Since(lastSent)
+			if remaining > 0 {
+				pq.log.Debug("PriorityQueue: min-wait active for", item.Key, "-", remaining.Round(time.Second), "remaining")
+				pq.reEnqueue(item, fromPriority, "min-wait")
+				pace()
+				continue
+			}
+		}
+
+		pq.mu.Lock()
+		pq.lastSentToWorker[item.Key] = time.Now()
+		pq.mu.Unlock()
+
+		select {
+		case pq.workChannel <- priorityWorkItem[K, V]{priorityQueueItem: item, fromPriority: fromPriority}:
+			lapReEnqueues = 0
 			if fromPriority {
-				queueName = "priority"
+				priorityTaken++
+				pq.priorityProcessed.Add(1)
+			} else {
+				normalTaken++
+				pq.normalProcessed.Add(1)
 			}
-			
-			pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Got ", queueName, " item: ", item.Key, " (skipCount=", item.SkipCount, ")")
-			
-			// Check if we should skip this item
-			if item.SkipCount > 0 {
-				// Decrement skip count and re-enqueue at back of same queue
-				item.SkipCount--
-				
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Skipping ", queueName, " item ", item.Key, ", will re-enqueue with ", item.SkipCount, " skips remaining")
-				
-				// Try non-blocking re-enqueue to avoid deadlock
-				if fromPriority {
-					select {
-					case pq.priorityQueue <- item:
-						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Successfully re-enqueued ", queueName, " item ", item.Key, " to priority queue")
-						pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Skipped ", queueName, " item ", item.Key, ", ", item.SkipCount, " skips remaining")
-						if pq.logger != nil {
-							pq.logger.Debug("[Cycle ", dispatcherCycles, "] Skipped ", queueName, " item ", item.Key, ", ", item.SkipCount, " skips remaining")
-						}
-					default:
-						// Queue full, item lost - log error
-						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " - queue full!")
-						if pq.logger != nil {
-							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue skipped ", queueName, " item ", item.Key, " - queue full!")
-						}
-					}
-				} else {
-					select {
-					case pq.normalQueue <- item:
-						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Successfully re-enqueued ", queueName, " item ", item.Key, " to normal queue")
-						pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Skipped ", queueName, " item ", item.Key, ", ", item.SkipCount, " skips remaining")
-						if pq.logger != nil {
-							pq.logger.Debug("[Cycle ", dispatcherCycles, "] Skipped ", queueName, " item ", item.Key, ", ", item.SkipCount, " skips remaining")
-						}
-					default:
-						// Queue full, item lost - log error
-						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " - queue full!")
-						if pq.logger != nil {
-							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue skipped ", queueName, " item ", item.Key, " - queue full!")
-						}
-					}
-				}
-				// DON'T count skipped items toward fairness!
-				// Continue to next item immediately - don't send to workers
-				continue
+			pq.log.Debug("PriorityQueue: sent", queueName, "item", item.Key, "to workers - fairness P:", priorityTaken, "N:", normalTaken)
+
+			if priorityTaken >= pq.fairnessRatio && normalTaken >= 1 {
+				priorityTaken = 0
+				normalTaken = 0
 			}
-			
-			// Check min-wait before sending to workers
-			pq.mu.RLock()
-			lastSent, hasLastSent := pq.lastSentToWorker[item.Key]
-			minWait := pq.minWait
-			pq.mu.RUnlock()
-			
-			if hasLastSent && time.Since(lastSent) < minWait {
-				// Too soon, re-enqueue at back of same queue
-				waitRemaining := minWait - time.Since(lastSent)
-				pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Min-wait active for ", queueName, " item ", item.Key, ", ", waitRemaining.Round(time.Second), " remaining")
-				if pq.logger != nil {
-					pq.logger.Debug("[Cycle ", dispatcherCycles, "] Min-wait active for ", queueName, " item ", item.Key, ", ", waitRemaining.Round(time.Second), " remaining")
-				}
-				
-				// Try non-blocking re-enqueue
-				if fromPriority {
-					select {
-					case pq.priorityQueue <- item:
-						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Re-enqueued ", queueName, " item ", item.Key, " due to min-wait")
-					default:
-						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
-						if pq.logger != nil {
-							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
-						}
-					}
-				} else {
-					select {
-					case pq.normalQueue <- item:
-						pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Re-enqueued ", queueName, " item ", item.Key, " due to min-wait")
-					default:
-						pq.pqLog.Error("[Dispatcher Cycle ", dispatcherCycles, "] ERROR: Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
-						if pq.logger != nil {
-							pq.logger.Error("[Cycle ", dispatcherCycles, "] Failed to re-enqueue ", queueName, " item ", item.Key, " for min-wait - queue full!")
-						}
-					}
-				}
-				// Don't count toward fairness, continue to next item
-				continue
-			}
-			
-			// Min-wait passed (or first time), update last sent time
-			pq.mu.Lock()
-			pq.lastSentToWorker[item.Key] = time.Now()
-			pq.mu.Unlock()
-			
-			// No skips and min-wait passed, send to workers
-			workItem := priorityWorkItem[K, V]{
-				priorityQueueItem: item,
-				fromPriority:      fromPriority,
-			}
-			
-			select {
-			case pq.workChannel <- workItem:
-				// NOW count toward fairness (only items actually sent to workers)
-				if fromPriority {
-					priorityTaken++
-					pq.priorityProcessed.Add(1)
-				} else {
-					normalTaken++
-					pq.normalProcessed.Add(1)
-				}
-				
-				pq.pqLog.Trace("[Dispatcher Cycle ", dispatcherCycles, "] Sent ", queueName, " item ", item.Key, " to workers (fairness: P=", priorityTaken, " N=", normalTaken, ")")
-				pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Sent ", queueName, " item ", item.Key, " to workers (fairness: P=", priorityTaken, " N=", normalTaken, ")")
-				if pq.logger != nil {
-					pq.logger.Debug("[Cycle ", dispatcherCycles, "] Sent ", queueName, " item ", item.Key, " to workers (fairness: P=", priorityTaken, " N=", normalTaken, ")")
-				}
-				
-				// Check if we've completed a fairness cycle
-				if priorityTaken >= pq.fairnessRatio && normalTaken >= 1 {
-					pq.pqLog.Debug("[Cycle ", dispatcherCycles, "] Fairness cycle complete, resetting counters")
-					if pq.logger != nil {
-						pq.logger.Debug("[Cycle ", dispatcherCycles, "] Fairness cycle complete, resetting counters")
-					}
-					priorityTaken = 0
-					normalTaken = 0
-				}
-			case <-pq.dispatcherCtx.Done():
-				return
-			}
+		case <-pq.dispatcherCtx.Done():
+			return
 		}
 	}
 }
 
 // worker processes items from the work channel
 func (pq *PriorityQueue[K, V]) worker(ctx context.Context, handler Handler[K, V], results chan<- Result[K], workerID int) {
-	pq.pqLog.Debug("PriorityQueue: worker ", workerID, " started")
-	if pq.logger != nil {
-		pq.logger.Debug("PriorityQueue: worker ", workerID, " started")
-	}
-	
+	pq.log.Debug("PriorityQueue: worker", workerID, "started")
+
 	for {
 		select {
 		case item, ok := <-pq.workChannel:
 			if !ok {
-				// Work channel closed, queue is stopped
-				pq.pqLog.Debug("PriorityQueue: worker ", workerID, " stopped (queue stopped)")
-				if pq.logger != nil {
-					pq.logger.Debug("PriorityQueue: worker ", workerID, " stopped (queue stopped)")
-				}
+				pq.log.Debug("PriorityQueue: worker", workerID, "stopped (queue stopped)")
 				return
 			}
 			pq.processItem(ctx, item, handler, results)
-			
+
 		case <-ctx.Done():
-			pq.pqLog.Debug("PriorityQueue: worker ", workerID, " stopped (context done)")
-			if pq.logger != nil {
-				pq.logger.Debug("PriorityQueue: worker ", workerID, " stopped (context done)")
-			}
+			pq.log.Debug("PriorityQueue: worker", workerID, "stopped (context done)")
 			return
 		}
 	}
@@ -583,63 +519,47 @@ func (pq *PriorityQueue[K, V]) worker(ctx context.Context, handler Handler[K, V]
 
 // processItem processes a single item
 func (pq *PriorityQueue[K, V]) processItem(ctx context.Context, item priorityWorkItem[K, V], handler Handler[K, V], results chan<- Result[K]) {
-	// Update metrics
 	waitTime := time.Since(item.EnqueuedAt)
-	
+
 	// Mark as in-flight
 	pq.mu.Lock()
 	pq.state[item.Key] = QueueStateInFlight
 	pq.mu.Unlock()
-	
-	if pq.metrics != nil {
-		pq.metrics.RecordStateChange(QueueStatePending, QueueStateInFlight)
-	}
-	
+
 	// Process the work
 	start := time.Now()
 	err := handler(ctx, item.Key, item.Value)
 	duration := time.Since(start)
-	
-	// Update state based on result
+
+	// Update state based on result - both outcomes are terminal and
+	// tracked in doneAt so pruning bounds memory for failures too
 	pq.mu.Lock()
 	if err == nil {
 		pq.state[item.Key] = QueueStateCompleted
-		pq.completedAt[item.Key] = time.Now()
 		pq.totalProcessed.Add(1)
-		pq.cleanupCompleted()
 	} else {
 		pq.state[item.Key] = QueueStateFailed
 		pq.totalFailed.Add(1)
 	}
+	pq.doneAt[item.Key] = time.Now()
+	pruneDone(pq.doneAt, pq.maxCompleted, func(key K) {
+		delete(pq.state, key)
+		delete(pq.isPriority, key)
+		delete(pq.doneAt, key)
+		delete(pq.lastSentToWorker, key)
+	})
 	pq.mu.Unlock()
-	
-	// Record metrics
-	if pq.metrics != nil {
-		pq.metrics.RecordDequeue(duration, err)
-		if err == nil {
-			pq.metrics.RecordStateChange(QueueStateInFlight, QueueStateCompleted)
-		} else {
-			pq.metrics.RecordStateChange(QueueStateInFlight, QueueStateFailed)
-		}
-	}
-	
-	// Log result
+
 	queueType := "normal"
 	if item.fromPriority {
 		queueType = "priority"
 	}
 	if err != nil {
-		pq.pqLog.Error("PriorityQueue: ", queueType, " item failed: key=", item.Key, " wait=", waitTime, " duration=", duration, " error=", err)
-		if pq.logger != nil {
-			pq.logger.Error("PriorityQueue: ", queueType, " item failed: key=", item.Key, " wait=", waitTime, " duration=", duration, " error=", err)
-		}
+		pq.log.Error("PriorityQueue:", queueType, "item failed:", item.Key, "wait:", waitTime, "duration:", duration, "error:", err)
 	} else {
-		pq.pqLog.Debug("PriorityQueue: ", queueType, " item completed: key=", item.Key, " wait=", waitTime, " duration=", duration)
-		if pq.logger != nil {
-			pq.logger.Debug("PriorityQueue: ", queueType, " item completed: key=", item.Key, " wait=", waitTime, " duration=", duration)
-		}
+		pq.log.Debug("PriorityQueue:", queueType, "item completed:", item.Key, "wait:", waitTime, "duration:", duration)
 	}
-	
+
 	// Send result
 	select {
 	case results <- Result[K]{Key: item.Key, Error: err, Duration: duration}:
@@ -648,48 +568,11 @@ func (pq *PriorityQueue[K, V]) processItem(ctx context.Context, item priorityWor
 	}
 }
 
-// cleanupCompleted removes old completed items if we exceed maxCompleted
-// Must be called with lock held
-func (pq *PriorityQueue[K, V]) cleanupCompleted() {
-	if pq.maxCompleted <= 0 || len(pq.completedAt) <= pq.maxCompleted {
-		return
-	}
-	
-	// Find oldest completed items to remove
-	type completedItem struct {
-		key  K
-		time time.Time
-	}
-	
-	items := make([]completedItem, 0, len(pq.completedAt))
-	for k, t := range pq.completedAt {
-		items = append(items, completedItem{key: k, time: t})
-	}
-	
-	// Sort by time (oldest first)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].time.After(items[j].time) {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
-	
-	// Remove oldest items
-	toRemove := len(items) - pq.maxCompleted
-	for i := 0; i < toRemove; i++ {
-		key := items[i].key
-		delete(pq.state, key)
-		delete(pq.isPriority, key)
-		delete(pq.completedAt, key)
-	}
-}
-
 // GetState returns the current state of a queued item
 func (pq *PriorityQueue[K, V]) GetState(key K) (QueueState, bool) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	
+
 	state, exists := pq.state[key]
 	return state, exists
 }
@@ -698,7 +581,7 @@ func (pq *PriorityQueue[K, V]) GetState(key K) (QueueState, bool) {
 func (pq *PriorityQueue[K, V]) IsPending(key K) bool {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	
+
 	state, exists := pq.state[key]
 	return exists && (state == QueueStatePending || state == QueueStateInFlight)
 }
@@ -707,7 +590,7 @@ func (pq *PriorityQueue[K, V]) IsPending(key K) bool {
 func (pq *PriorityQueue[K, V]) IsPriority(key K) (bool, bool) {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	
+
 	isPriority, exists := pq.isPriority[key]
 	return isPriority, exists
 }
@@ -716,7 +599,7 @@ func (pq *PriorityQueue[K, V]) IsPriority(key K) (bool, bool) {
 func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 	pq.mu.RLock()
 	defer pq.mu.RUnlock()
-	
+
 	stats := PriorityQueueStats{
 		PriorityQueueSize: len(pq.priorityQueue),
 		NormalQueueSize:   len(pq.normalQueue),
@@ -727,7 +610,7 @@ func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 		NormalProcessed:   pq.normalProcessed.Load(),
 		FairnessRatio:     pq.fairnessRatio,
 	}
-	
+
 	// Count states per queue
 	for key, state := range pq.state {
 		isPriority := pq.isPriority[key]
@@ -746,7 +629,7 @@ func (pq *PriorityQueue[K, V]) Stats() PriorityQueueStats {
 			stats.Failed++
 		}
 	}
-	
+
 	return stats
 }
 
@@ -759,68 +642,10 @@ func (pq *PriorityQueue[K, V]) Size() (priority int, normal int) {
 func (pq *PriorityQueue[K, V]) Clear() {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
-	
+
 	pq.state = make(map[K]QueueState)
 	pq.isPriority = make(map[K]bool)
-	pq.completedAt = make(map[K]time.Time)
-	
-	pq.pqLog.Info("PriorityQueue: cleared all state tracking")
-	if pq.logger != nil {
-		pq.logger.Info("PriorityQueue: cleared all state tracking")
-	}
-}
+	pq.doneAt = make(map[K]time.Time)
 
-// MustEnqueue enqueues work, blocking if the appropriate queue is full
-func (pq *PriorityQueue[K, V]) MustEnqueue(ctx context.Context, key K, value V, isPriority bool) error {
-	if !pq.running.Load() {
-		return fmt.Errorf("queue is stopped")
-	}
-	
-	pq.mu.Lock()
-	
-	// Check if already pending or in-flight
-	if state, exists := pq.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
-		pq.mu.Unlock()
-		pq.pqLog.Debug("PriorityQueue: item already ", state, ", skipping: ", key)
-		if pq.logger != nil {
-			pq.logger.Debug("PriorityQueue: item already ", state, ", skipping: ", key)
-		}
-		return nil // Already queued, not an error
-	}
-	
-	// Mark as pending
-	oldState := pq.state[key]
-	pq.state[key] = QueueStatePending
-	pq.isPriority[key] = isPriority
-	pq.mu.Unlock()
-	
-	// Select appropriate queue
-	var targetQueue chan priorityQueueItem[K, V]
-	if isPriority {
-		targetQueue = pq.priorityQueue
-	} else {
-		targetQueue = pq.normalQueue
-	}
-	
-	// Blocking send
-	select {
-	case targetQueue <- priorityQueueItem[K, V]{Key: key, Value: value, SkipCount: 0, EnqueuedAt: time.Now()}:
-		pq.totalEnqueued.Add(1)
-		if pq.metrics != nil {
-			pq.metrics.RecordEnqueue(true)
-			pq.metrics.RecordStateChange(oldState, QueueStatePending)
-		}
-		return nil
-	case <-ctx.Done():
-		// Rollback on context cancellation
-		pq.mu.Lock()
-		if oldState == 0 {
-			delete(pq.state, key)
-			delete(pq.isPriority, key)
-		} else {
-			pq.state[key] = oldState
-		}
-		pq.mu.Unlock()
-		return ctx.Err()
-	}
+	pq.log.Debug("PriorityQueue: cleared all state tracking")
 }

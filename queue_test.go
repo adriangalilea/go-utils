@@ -11,22 +11,22 @@ import (
 
 func TestQueueBasicEnqueueDequeue(t *testing.T) {
 	q := NewQueue[string, int](10)
-	
+
 	// First enqueue should succeed
 	if q.TryEnqueue("item1", 100) != Enqueued {
 		t.Fatal("Failed to enqueue first item")
 	}
-	
+
 	// Duplicate enqueue should return AlreadyQueued
 	if q.TryEnqueue("item1", 200) != AlreadyQueued {
 		t.Fatal("Should return AlreadyQueued for duplicate")
 	}
-	
+
 	// Different key should succeed
 	if q.TryEnqueue("item2", 300) != Enqueued {
 		t.Fatal("Failed to enqueue different item")
 	}
-	
+
 	stats := q.Stats()
 	if stats.Pending != 2 {
 		t.Errorf("Expected 2 pending items, got %d", stats.Pending)
@@ -35,7 +35,7 @@ func TestQueueBasicEnqueueDequeue(t *testing.T) {
 
 func TestQueueFullBehavior(t *testing.T) {
 	q := NewQueue[int, string](2) // Small queue
-	
+
 	// Fill the queue
 	if q.TryEnqueue(1, "first") != Enqueued {
 		t.Fatal("Failed to enqueue first item")
@@ -43,12 +43,12 @@ func TestQueueFullBehavior(t *testing.T) {
 	if q.TryEnqueue(2, "second") != Enqueued {
 		t.Fatal("Failed to enqueue second item")
 	}
-	
+
 	// Queue should be full
 	if q.TryEnqueue(3, "third") != QueueFull {
 		t.Fatal("Should return QueueFull when queue is full")
 	}
-	
+
 	// But duplicate should return AlreadyQueued (not QueueFull)
 	if q.TryEnqueue(1, "duplicate") != AlreadyQueued {
 		t.Fatal("Should return AlreadyQueued for duplicate even when queue is full")
@@ -59,10 +59,10 @@ func TestQueueProcessWorker(t *testing.T) {
 	q := NewQueue[string, int](10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	processed := make(map[string]int)
 	var mu sync.Mutex
-	
+
 	// Start workers and get results channel
 	results := q.Process(ctx, 2, func(ctx context.Context, key string, value int) error {
 		mu.Lock()
@@ -70,12 +70,12 @@ func TestQueueProcessWorker(t *testing.T) {
 		mu.Unlock()
 		return nil
 	})
-	
+
 	// Enqueue items
 	q.TryEnqueue("a", 1)
 	q.TryEnqueue("b", 2)
 	q.TryEnqueue("c", 3)
-	
+
 	// Collect results
 	count := 0
 	for count < 3 {
@@ -89,10 +89,10 @@ func TestQueueProcessWorker(t *testing.T) {
 			t.Fatal("Timeout waiting for results")
 		}
 	}
-	
+
 	mu.Lock()
 	defer mu.Unlock()
-	
+
 	if len(processed) != 3 {
 		t.Errorf("Expected 3 processed items, got %d", len(processed))
 	}
@@ -105,22 +105,22 @@ func TestQueueRaceConditions(t *testing.T) {
 	q := NewQueue[int, int](100)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	var processed atomic.Int32
-	
+
 	// Start workers with results channel
 	results := q.Process(ctx, 5, func(ctx context.Context, key int, value int) error {
 		processed.Add(1)
 		time.Sleep(time.Millisecond) // Simulate work
 		return nil
 	})
-	
+
 	// Drain results in background
 	go func() {
 		for range results {
 		}
 	}()
-	
+
 	// Multiple goroutines trying to enqueue the same items
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -133,10 +133,10 @@ func TestQueueRaceConditions(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	time.Sleep(200 * time.Millisecond) // Wait for processing
-	
+
 	// Should have processed exactly 100 unique items (0-99)
 	count := processed.Load()
 	if count != 100 {
@@ -148,22 +148,22 @@ func TestQueueStateTransitions(t *testing.T) {
 	q := NewQueue[string, int](10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// Check initial state
 	if q.IsPending("test") {
 		t.Error("Should not be pending initially")
 	}
-	
+
 	// Enqueue
 	q.TryEnqueue("test", 42)
-	
+
 	state, exists := q.GetState("test")
 	if !exists || state != QueueStatePending {
 		t.Error("Should be in pending state after enqueue")
 	}
-	
+
 	processed := make(chan bool)
-	
+
 	// Start worker with results
 	results := q.Process(ctx, 1, func(ctx context.Context, key string, value int) error {
 		// Check in-flight state
@@ -174,21 +174,21 @@ func TestQueueStateTransitions(t *testing.T) {
 		processed <- true
 		return nil
 	})
-	
+
 	// Drain results
 	go func() {
 		for range results {
 		}
 	}()
-	
+
 	<-processed
 	time.Sleep(10 * time.Millisecond) // Let it complete
-	
+
 	state, exists = q.GetState("test")
 	if !exists || state != QueueStateCompleted {
 		t.Error("Should be in completed state after processing")
 	}
-	
+
 	// Can re-enqueue after completion
 	if q.TryEnqueue("test", 43) != Enqueued {
 		t.Error("Should be able to re-enqueue completed item")
@@ -199,40 +199,40 @@ func TestQueueProcessWithRetry(t *testing.T) {
 	q := NewQueue[string, int](10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	attempts := make(map[string]int)
 	var mu sync.Mutex
-	
+
 	// Start worker with retry
 	results := q.ProcessWithRetry(ctx, 1, func(ctx context.Context, key string, value int) error {
 		mu.Lock()
 		attempts[key]++
 		count := attempts[key]
 		mu.Unlock()
-		
+
 		if count < 3 {
 			return errors.New("simulated failure")
 		}
 		return nil
 	}, 5) // max 5 retries
-	
+
 	// Drain results
 	go func() {
 		for range results {
 		}
 	}()
-	
+
 	q.TryEnqueue("retry-test", 1)
-	
+
 	time.Sleep(5 * time.Second) // Wait for retries
-	
+
 	mu.Lock()
 	defer mu.Unlock()
-	
+
 	if attempts["retry-test"] != 3 {
 		t.Errorf("Expected 3 attempts, got %d", attempts["retry-test"])
 	}
-	
+
 	// Should be completed after successful retry
 	state, _ := q.GetState("retry-test")
 	if state != QueueStateCompleted {
@@ -243,18 +243,18 @@ func TestQueueProcessWithRetry(t *testing.T) {
 func TestQueueMustEnqueue(t *testing.T) {
 	q := NewQueue[string, int](2)
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Fill queue
 	q.TryEnqueue("a", 1)
 	q.TryEnqueue("b", 2)
-	
+
 	// Start a goroutine that will block on MustEnqueue
 	done := make(chan error)
 	go func() {
 		err := q.MustEnqueue(ctx, "c", 3)
 		done <- err
 	}()
-	
+
 	// Should timeout since queue is full
 	select {
 	case err := <-done:
@@ -265,10 +265,10 @@ func TestQueueMustEnqueue(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		// Expected
 	}
-	
+
 	// Cancel context
 	cancel()
-	
+
 	// Now it should complete with context error
 	select {
 	case err := <-done:
@@ -285,26 +285,26 @@ func TestQueueCleanupCompleted(t *testing.T) {
 	q := NewQueue[int, string](10, WithMaxCompleted[int, string](5)) // Track only 5 completed
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	// Start worker
 	results := q.Process(ctx, 1, func(ctx context.Context, key int, value string) error {
 		return nil
 	})
-	
+
 	// Drain results
 	go func() {
 		for range results {
 		}
 	}()
-	
+
 	// Enqueue more than maxCompleted
 	for i := 0; i < 10; i++ {
 		q.TryEnqueue(i, "value")
 		time.Sleep(10 * time.Millisecond) // Ensure processing
 	}
-	
+
 	time.Sleep(100 * time.Millisecond)
-	
+
 	stats := q.Stats()
 	if stats.Completed > 5 {
 		t.Errorf("Should track at most 5 completed, got %d", stats.Completed)
@@ -313,9 +313,9 @@ func TestQueueCleanupCompleted(t *testing.T) {
 
 func TestQueueConcurrentEnqueueSameKey(t *testing.T) {
 	q := NewQueue[string, int](100)
-	
+
 	success := atomic.Int32{}
-	
+
 	// 100 goroutines try to enqueue the same key
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -327,9 +327,9 @@ func TestQueueConcurrentEnqueueSameKey(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
-	
+
 	// Exactly one should succeed
 	if success.Load() != 1 {
 		t.Errorf("Expected exactly 1 successful enqueue, got %d", success.Load())
@@ -338,7 +338,7 @@ func TestQueueConcurrentEnqueueSameKey(t *testing.T) {
 
 func BenchmarkQueueTryEnqueue(b *testing.B) {
 	q := NewQueue[int, int](1000)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		q.TryEnqueue(i, i)
@@ -347,7 +347,7 @@ func BenchmarkQueueTryEnqueue(b *testing.B) {
 
 func BenchmarkQueueTryEnqueueParallel(b *testing.B) {
 	q := NewQueue[int, int](1000)
-	
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0

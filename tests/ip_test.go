@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	. "github.com/adriangalilea/go-utils"
+	. "github.com/adriangalilea/go-utils" //nolint:staticcheck
 )
 
 func TestIPAddrValueSemantics(t *testing.T) {
@@ -90,19 +90,19 @@ func TestZeroValue(t *testing.T) {
 	// Test that zero value is valid
 	var addr IPAddr
 	// Zero value should be IPv6 "::" (all zeros, is4=false)
-	
+
 	if addr.IsV4() {
 		t.Errorf("Zero value should be IPv6")
 	}
-	
+
 	if !addr.IsV6() {
 		t.Errorf("Zero value should be IPv6")
 	}
-	
+
 	if !addr.IsUnspecified() {
 		t.Errorf("Zero value should be unspecified (::)")
 	}
-	
+
 	// Should be comparable
 	var addr2 IPAddr
 	if addr != addr2 {
@@ -112,22 +112,22 @@ func TestZeroValue(t *testing.T) {
 
 func TestNetworkIteration(t *testing.T) {
 	network := Must(Net.ParseCIDR("192.168.1.0/30"))
-	
+
 	// Test First and Last
 	first := network.First()
 	last := network.Last()
-	
+
 	expectedFirst := Must(IP.FromString("192.168.1.1"))
 	expectedLast := Must(IP.FromString("192.168.1.2"))
-	
+
 	if first != expectedFirst {
 		t.Errorf("First IP incorrect: got %s, want %s", first.String(), expectedFirst.String())
 	}
-	
+
 	if last != expectedLast {
 		t.Errorf("Last IP incorrect: got %s, want %s", last.String(), expectedLast.String())
 	}
-	
+
 	// Test iteration
 	current := first
 	count := 0
@@ -145,7 +145,7 @@ func TestNetworkIteration(t *testing.T) {
 			t.Fatal("Iteration exceeded expected count")
 		}
 	}
-	
+
 	if count != 2 {
 		t.Errorf("Expected 2 usable IPs, got %d", count)
 	}

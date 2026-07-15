@@ -18,7 +18,7 @@
 //	// Offensive programming with Must - for values that SHOULD work
 //	localhost := Must(IP.FromString("127.0.0.1"))        // Static IP, panic if fails
 //	serverIP := Must(IP.FromString("192.168.1.1", V4))  // Assert IPv4
-//	
+//
 //	// Network operations with Net namespace
 //	network := Must(Net.ParseCIDR("192.168.1.0/24"))
 //	fmt.Println(network.Contains(addr))      // true
@@ -26,20 +26,20 @@
 //	fmt.Println(network.Last())              // 192.168.1.254
 //	fmt.Println(network.Size())              // 256
 //	fmt.Println(network.UsableSize())        // 254
-//	
+//
 //	// Network-aware iteration
 //	for ip := network.First(); ip != network.Last(); {
 //		fmt.Println(ip)
 //		ip = Must(network.Next(ip))
 //	}
-//	
+//
 //	// Check for user/runtime errors - exits cleanly with message
 //	addr, err := IP.FromString(userProvidedIP)
 //	Check(err, "Invalid IP address provided")
-//	
+//
 //	// Get simple strongly-typed value
 //	v4 := addr.IPv4()  // Returns IPv4 ([4]byte), uses Assert internally
-//	
+//
 //	// Parse with version assertion (returns error if wrong version)
 //	addr, err := IP.FromString("192.168.1.1", V4)
 //	addr, err := IP.FromString("2001:db8::1", V6)
@@ -109,7 +109,7 @@ func (ipNamespace) FromString(s string, version ...Version) (IPAddr, error) {
 	if ip == nil {
 		return IPAddr{}, fmt.Errorf("invalid IP address: %s", s)
 	}
-	
+
 	var result IPAddr
 	if ip4 := ip.To4(); ip4 != nil {
 		copy(result.data[:4], ip4)
@@ -118,7 +118,7 @@ func (ipNamespace) FromString(s string, version ...Version) (IPAddr, error) {
 		copy(result.data[:], ip)
 		result.is4 = false
 	}
-	
+
 	// Check version if specified
 	if len(version) > 0 {
 		switch version[0] {
@@ -134,7 +134,7 @@ func (ipNamespace) FromString(s string, version ...Version) (IPAddr, error) {
 			return IPAddr{}, fmt.Errorf("invalid version: %d", version[0])
 		}
 	}
-	
+
 	return result, nil
 }
 
@@ -144,7 +144,7 @@ func (ipNamespace) FromString(s string, version ...Version) (IPAddr, error) {
 // Returns error if byte length is invalid or version mismatch.
 func (ipNamespace) FromBytes(b []byte, version ...Version) (IPAddr, error) {
 	var result IPAddr
-	
+
 	switch len(b) {
 	case 4:
 		copy(result.data[:4], b)
@@ -155,7 +155,7 @@ func (ipNamespace) FromBytes(b []byte, version ...Version) (IPAddr, error) {
 	default:
 		return IPAddr{}, fmt.Errorf("invalid byte length for IP: %d (expected 4 or 16)", len(b))
 	}
-	
+
 	// Check version if specified
 	if len(version) > 0 {
 		switch version[0] {
@@ -171,7 +171,7 @@ func (ipNamespace) FromBytes(b []byte, version ...Version) (IPAddr, error) {
 			return IPAddr{}, fmt.Errorf("invalid version: %d", version[0])
 		}
 	}
-	
+
 	return result, nil
 }
 
@@ -183,21 +183,21 @@ func (ipNamespace) New(parts ...interface{}) (IPAddr, error) {
 	// Check if last parameter is a Version
 	var version *Version
 	ipParts := parts
-	
+
 	if len(parts) > 0 {
 		if v, ok := parts[len(parts)-1].(Version); ok {
 			version = &v
 			ipParts = parts[:len(parts)-1]
 		}
 	}
-	
+
 	switch len(ipParts) {
 	case 4:
 		// IPv4: expect 4 bytes
 		if version != nil && *version != V4 {
 			return IPAddr{}, fmt.Errorf("expected IPv6 with 8 values, got 4")
 		}
-		
+
 		var result IPAddr
 		result.is4 = true
 		for i, part := range ipParts {
@@ -214,13 +214,13 @@ func (ipNamespace) New(parts ...interface{}) (IPAddr, error) {
 			}
 		}
 		return result, nil
-		
+
 	case 8:
 		// IPv6: expect 8 uint16s
 		if version != nil && *version != V6 {
 			return IPAddr{}, fmt.Errorf("expected IPv4 with 4 values, got 8")
 		}
-		
+
 		var result IPAddr
 		result.is4 = false
 		for i, part := range ipParts {
@@ -240,7 +240,7 @@ func (ipNamespace) New(parts ...interface{}) (IPAddr, error) {
 			result.data[i*2+1] = byte(val)
 		}
 		return result, nil
-		
+
 	default:
 		return IPAddr{}, fmt.Errorf("IP.New requires 4 values (IPv4) or 8 values (IPv6), got %d", len(ipParts))
 	}
@@ -267,22 +267,22 @@ func (ipNamespace) FromNetIP(ip net.IP) (IPAddr, error) {
 	if ip == nil {
 		return IPAddr{}, fmt.Errorf("nil net.IP")
 	}
-	
+
 	var result IPAddr
-	
+
 	// Try to get IPv4 representation
 	if ip4 := ip.To4(); ip4 != nil {
 		copy(result.data[:4], ip4)
 		result.is4 = true
 		return result, nil
 	}
-	
+
 	// Otherwise treat as IPv6
 	ip6 := ip.To16()
 	if ip6 == nil {
 		return IPAddr{}, fmt.Errorf("invalid net.IP: not IPv4 or IPv6")
 	}
-	
+
 	copy(result.data[:], ip6)
 	result.is4 = false
 	return result, nil
@@ -295,7 +295,7 @@ func (netNamespace) ParseCIDR(s string) (Network, error) {
 	if err != nil {
 		return Network{}, err
 	}
-	
+
 	// Get the network address (first IP in range)
 	var networkIP IPAddr
 	if ip4 := ipnet.IP.To4(); ip4 != nil {
@@ -305,10 +305,10 @@ func (netNamespace) ParseCIDR(s string) (Network, error) {
 		copy(networkIP.data[:], ipnet.IP)
 		networkIP.is4 = false
 	}
-	
+
 	// Calculate prefix length from mask
 	ones, _ := ipnet.Mask.Size()
-	
+
 	return Network{
 		ip:   networkIP,
 		bits: ones,
@@ -351,8 +351,8 @@ func (ip IPAddr) IsPrivate() bool {
 	// fe80::/10 - Link-local addresses
 	// fec0::/10 - Site-local addresses (deprecated but still exists)
 	return (ip.data[0] == 0xfc || ip.data[0] == 0xfd) || // fc00::/7 (unique local)
-		(ip.data[0] == 0xfe && (ip.data[1] & 0xc0) == 0x80) || // fe80::/10 (link-local)
-		(ip.data[0] == 0xfe && (ip.data[1] & 0xc0) == 0xc0) // fec0::/10 (site-local, deprecated)
+		(ip.data[0] == 0xfe && (ip.data[1]&0xc0) == 0x80) || // fe80::/10 (link-local)
+		(ip.data[0] == 0xfe && (ip.data[1]&0xc0) == 0xc0) // fec0::/10 (site-local, deprecated)
 }
 
 // IsLoopback checks if this is a loopback address
@@ -457,7 +457,7 @@ func (n Network) Contains(ip IPAddr) bool {
 	if n.ip.is4 != ip.is4 {
 		return false
 	}
-	
+
 	if n.ip.is4 {
 		// IPv4 comparison
 		mask := uint32(0xFFFFFFFF << (32 - n.bits))
@@ -465,18 +465,18 @@ func (n Network) Contains(ip IPAddr) bool {
 		ipAddr := uint32(ip.data[0])<<24 | uint32(ip.data[1])<<16 | uint32(ip.data[2])<<8 | uint32(ip.data[3])
 		return (netAddr & mask) == (ipAddr & mask)
 	}
-	
+
 	// IPv6 comparison
 	bytesToCheck := n.bits / 8
 	bitsRemaining := n.bits % 8
-	
+
 	// Check full bytes
 	for i := 0; i < bytesToCheck; i++ {
 		if n.ip.data[i] != ip.data[i] {
 			return false
 		}
 	}
-	
+
 	// Check remaining bits if any
 	if bitsRemaining > 0 && bytesToCheck < 16 {
 		mask := byte(0xFF << (8 - bitsRemaining))
@@ -484,7 +484,7 @@ func (n Network) Contains(ip IPAddr) bool {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -501,11 +501,11 @@ func (n Network) BroadcastAddress() IPAddr {
 		if hostBits == 0 {
 			return n.ip // Single host
 		}
-		
+
 		mask := uint32(0xFFFFFFFF << hostBits)
 		netAddr := uint32(n.ip.data[0])<<24 | uint32(n.ip.data[1])<<16 | uint32(n.ip.data[2])<<8 | uint32(n.ip.data[3])
 		broadcast := netAddr | ^mask
-		
+
 		var result IPAddr
 		result.is4 = true
 		result.data[0] = byte(broadcast >> 24)
@@ -514,18 +514,18 @@ func (n Network) BroadcastAddress() IPAddr {
 		result.data[3] = byte(broadcast)
 		return result
 	}
-	
+
 	// IPv6 broadcast (though IPv6 doesn't use broadcast, this returns the last address)
 	var result IPAddr
 	copy(result.data[:], n.ip.data[:])
 	result.is4 = false
-	
+
 	// Set all host bits to 1
 	hostBits := 128 - n.bits
 	if hostBits == 0 {
 		return n.ip // Single host
 	}
-	
+
 	// Set bits from the end
 	for i := 15; i >= 0 && hostBits > 0; i-- {
 		if hostBits >= 8 {
@@ -537,7 +537,7 @@ func (n Network) BroadcastAddress() IPAddr {
 			hostBits = 0
 		}
 	}
-	
+
 	return result
 }
 
@@ -551,7 +551,7 @@ func (n Network) First() IPAddr {
 	if !n.ip.is4 && n.bits >= 127 {
 		return n.NetworkAddress()
 	}
-	
+
 	// Otherwise, network + 1
 	return n.addToIP(n.NetworkAddress(), 1)
 }
@@ -566,7 +566,7 @@ func (n Network) Last() IPAddr {
 	if !n.ip.is4 && n.bits >= 127 {
 		return n.BroadcastAddress()
 	}
-	
+
 	// Otherwise, broadcast - 1
 	return n.addToIP(n.BroadcastAddress(), -1)
 }
@@ -581,7 +581,7 @@ func (n Network) Size() uint64 {
 		}
 		return 1 << uint(hostBits)
 	}
-	
+
 	// IPv6
 	hostBits := 128 - n.bits
 	if hostBits > 63 {
@@ -596,12 +596,12 @@ func (n Network) Size() uint64 {
 // (excludes network and broadcast addresses for IPv4 networks larger than /31)
 func (n Network) UsableSize() uint64 {
 	size := n.Size()
-	
+
 	// For IPv4 networks larger than /31, subtract network and broadcast
 	if n.ip.is4 && n.bits < 31 && size > 2 {
 		return size - 2
 	}
-	
+
 	// For IPv6 or small IPv4 networks, all IPs are usable
 	return size
 }
@@ -612,14 +612,14 @@ func (n Network) Next(ip IPAddr) (IPAddr, error) {
 	if !n.Contains(ip) {
 		return IPAddr{}, fmt.Errorf("IP %s is not in network %s", ip.String(), n.String())
 	}
-	
+
 	next := n.addToIP(ip, 1)
-	
+
 	// Check if still in network
 	if !n.Contains(next) {
 		return IPAddr{}, fmt.Errorf("no next IP: %s is the last IP in network", ip.String())
 	}
-	
+
 	return next, nil
 }
 
@@ -629,14 +629,14 @@ func (n Network) Prev(ip IPAddr) (IPAddr, error) {
 	if !n.Contains(ip) {
 		return IPAddr{}, fmt.Errorf("IP %s is not in network %s", ip.String(), n.String())
 	}
-	
+
 	prev := n.addToIP(ip, -1)
-	
+
 	// Check if still in network
 	if !n.Contains(prev) {
 		return IPAddr{}, fmt.Errorf("no previous IP: %s is the first IP in network", ip.String())
 	}
-	
+
 	return prev, nil
 }
 
@@ -658,12 +658,12 @@ func (n Network) addToIP(ip IPAddr, delta int) IPAddr {
 		result.data[3] = byte(val)
 		return result
 	}
-	
+
 	// For IPv6, handle byte by byte with carry
 	var result IPAddr
 	copy(result.data[:], ip.data[:])
 	result.is4 = false
-	
+
 	if delta > 0 {
 		carry := delta
 		for i := 15; i >= 0 && carry > 0; i-- {
@@ -700,7 +700,7 @@ func (n Network) ToNetIPNet() *net.IPNet {
 	} else {
 		mask = net.CIDRMask(n.bits, 128)
 	}
-	
+
 	return &net.IPNet{
 		IP:   n.ip.ToNetIP(),
 		Mask: mask,
@@ -718,10 +718,10 @@ func (netNamespace) FromNetIPNet(ipnet *net.IPNet) Network {
 		copy(ip.data[:], ipnet.IP.To16())
 		ip.is4 = false
 	}
-	
+
 	// Get prefix length from mask
 	ones, _ := ipnet.Mask.Size()
-	
+
 	return Network{
 		ip:   ip,
 		bits: ones,

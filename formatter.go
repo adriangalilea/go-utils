@@ -4,19 +4,29 @@ import (
 	"fmt"
 	"math"
 	"os"
-	
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
 // Lipgloss styles for each message type
 var (
-	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
-	warnStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	eventStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
-	traceStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-	waitStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	infoStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	readyStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	errorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
+	warnStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	eventStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	traceStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	waitStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
+	infoStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
+	readyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+
+	boldStyle    = lipgloss.NewStyle().Bold(true)
+	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	greenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	yellowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	blueStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	magentaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	cyanStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	grayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // MessageType represents different types of formatted messages
@@ -34,110 +44,62 @@ const (
 
 // Unicode symbols for each message type
 var symbols = map[MessageType]string{
-	TypeWait:    "○",
-	TypeError:   "⨯",
-	TypeWarn:    "⚠",
-	TypeReady:   "▶",
-	TypeInfo:    " ",
-	TypeEvent:   "✓",
-	TypeTrace:   "»",
+	TypeWait:  "○",
+	TypeError: "⨯",
+	TypeWarn:  "⚠",
+	TypeReady: "▶",
+	TypeInfo:  " ",
+	TypeEvent: "✓",
+	TypeTrace: "»",
 }
 
-// Config for formatter
-type Config struct {
-	NoColor    bool
-	ForceColor bool
-	Prefix     string
+var symbolStyles = map[MessageType]lipgloss.Style{
+	TypeWait:  waitStyle,
+	TypeError: errorStyle,
+	TypeWarn:  warnStyle,
+	TypeReady: readyStyle,
+	TypeInfo:  infoStyle,
+	TypeEvent: eventStyle,
+	TypeTrace: traceStyle,
 }
 
 // formatOps handles all formatting operations
 type formatOps struct {
-	config       Config
 	colorEnabled bool
+
+	// Currency provides sign-colored currency formatting: Format.Currency.USD(v)
+	Currency formatCurrencyOps
 }
 
 // Format provides string formatting operations
-var Format = &formatOps{
-	config: Config{},
+var Format = &formatOps{}
+
+func init() {
+	Format.colorEnabled = shouldEnableColor()
 }
 
-// Initialize Format colors
-var _ = func() bool {
-	Format.colorEnabled = Format.shouldEnableColor()
-	return true
-}()
-
-// shouldEnableColor determines if color output should be enabled
-func (f *formatOps) shouldEnableColor() bool {
-	if f.config.NoColor {
-		return false
-	}
-	if f.config.ForceColor {
-		return true
-	}
-	
-	// Check if NO_COLOR env var is set
+// shouldEnableColor determines if color output should be enabled.
+// NO_COLOR and FORCE_COLOR env vars override; lipgloss handles terminal detection.
+func shouldEnableColor() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
-	
-	// Check if FORCE_COLOR env var is set
 	if os.Getenv("FORCE_COLOR") != "" {
 		return true
 	}
-	
-	// Lipgloss will handle terminal detection
 	return true
 }
 
 // formatMessage creates a formatted message with symbol and color
 func (f *formatOps) formatMessage(msgType MessageType, args ...interface{}) string {
-	// Check if strict mode is enabled
-	// Set FORMATTER_STRICT to any value to only accept strings (catches type errors)
-	// By default, accepts any type for convenience (like fmt.Println)
-	if os.Getenv("FORMATTER_STRICT") != "" {
-		// In strict mode, only accept strings
-		for i, arg := range args {
-			if _, ok := arg.(string); !ok {
-				panic(fmt.Sprintf("formatter: argument %d is %T, not string (FORMATTER_STRICT is set)", i, arg))
-			}
-		}
-	}
-	
-	// Format message - use Sprintln to add spaces between args, then trim newline
-	message := fmt.Sprintln(args...)
-	message = message[:len(message)-1] // Remove trailing newline
-	
-	if f.config.Prefix != "" {
-		message = fmt.Sprintf("[%s] %s", f.config.Prefix, message)
-	}
-	
-	// Get symbol and apply style
+	message := String(args...)
+
 	symbol := symbols[msgType]
-	var coloredSymbol string
-	
-	if !f.colorEnabled {
-		coloredSymbol = symbol
-	} else {
-		switch msgType {
-		case TypeError:
-			coloredSymbol = errorStyle.Render(symbol)
-		case TypeWarn:
-			coloredSymbol = warnStyle.Render(symbol)
-		case TypeEvent:
-			coloredSymbol = eventStyle.Render(symbol)
-		case TypeTrace:
-			coloredSymbol = traceStyle.Render(symbol)
-		case TypeWait:
-			coloredSymbol = waitStyle.Render(symbol)
-		case TypeInfo:
-			coloredSymbol = infoStyle.Render(symbol)
-		case TypeReady:
-			coloredSymbol = readyStyle.Render(symbol)
-		}
+	if f.colorEnabled {
+		symbol = symbolStyles[msgType].Render(symbol)
 	}
-	
-	return fmt.Sprintf("%s %s", coloredSymbol, message)
+
+	return symbol + " " + message
 }
 
 // Error returns an error-formatted string
@@ -174,7 +136,6 @@ func (f *formatOps) Event(args ...interface{}) string {
 func (f *formatOps) Trace(args ...interface{}) string {
 	return f.formatMessage(TypeTrace, args...)
 }
-
 
 // Package-level functions using default formatter
 
@@ -215,119 +176,120 @@ func Trace(args ...interface{}) string {
 
 // Style functions using lipgloss
 
-// Bold returns a function that renders text in bold
+// Bold renders text in bold
 func (f *formatOps) Bold(text string) string {
-	return lipgloss.NewStyle().Bold(true).Render(text)
+	return boldStyle.Render(text)
 }
 
-// Red returns a function that renders text in red
+// Red renders text in red
 func (f *formatOps) Red(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(text)
+	return redStyle.Render(text)
 }
 
-// Green returns a function that renders text in green
+// Green renders text in green
 func (f *formatOps) Green(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(text)
+	return greenStyle.Render(text)
 }
 
-// Yellow returns a function that renders text in yellow
+// Yellow renders text in yellow
 func (f *formatOps) Yellow(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(text)
+	return yellowStyle.Render(text)
 }
 
-// Blue returns a function that renders text in blue
+// Blue renders text in blue
 func (f *formatOps) Blue(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render(text)
+	return blueStyle.Render(text)
 }
 
-// Magenta returns a function that renders text in magenta
+// Magenta renders text in magenta
 func (f *formatOps) Magenta(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render(text)
+	return magentaStyle.Render(text)
 }
 
-// Cyan returns a function that renders text in cyan
+// Cyan renders text in cyan
 func (f *formatOps) Cyan(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(text)
+	return cyanStyle.Render(text)
 }
 
-// Gray returns a function that renders text in gray
+// Gray renders text in gray
 func (f *formatOps) Gray(text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(text)
+	return grayStyle.Render(text)
+}
+
+// signColored colors a string by the sign of value: green positive,
+// red negative, gray zero. Respects color detection.
+func signColored(value float64, s string) string {
+	if !Format.colorEnabled {
+		return s
+	}
+	if value > 0 {
+		return greenStyle.Render(s)
+	}
+	if value < 0 {
+		return redStyle.Render(s)
+	}
+	return grayStyle.Render(s)
 }
 
 // Number formatting functions
 
-// FormatMoney formats a number as money with color based on sign
-// Positive: green with + prefix
-// Negative: red with - prefix (minus is kept)
-// Zero: gray with no prefix
-func (f *formatOps) Money(value float64) string {
-	formatted := fmt.Sprintf("$%.2f", value)
-	
-	if !f.colorEnabled {
-		if value > 0 {
-			return "+" + formatted
+// groupThousands inserts thousands separators into a formatted number:
+// "1234567.89" -> "1,234,567.89". Sign prefixes pass through untouched.
+func groupThousands(formatted string) string {
+	sign := ""
+	if strings.HasPrefix(formatted, "-") || strings.HasPrefix(formatted, "+") {
+		sign, formatted = formatted[:1], formatted[1:]
+	}
+
+	intPart, rest := formatted, ""
+	if i := strings.IndexByte(formatted, '.'); i >= 0 {
+		intPart, rest = formatted[:i], formatted[i:]
+	}
+	if len(intPart) <= 3 {
+		return sign + formatted
+	}
+
+	var b strings.Builder
+	for i, digit := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			b.WriteByte(',')
 		}
-		return formatted
+		b.WriteRune(digit)
 	}
-	
-	// Use lipgloss styles which should properly reset
-	if value > 0 {
-		// Ensure proper reset by using a fresh style
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("+" + formatted)
-	} else if value < 0 {
-		// Ensure proper reset by using a fresh style
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
-	}
-	// Gray for zero
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+	return sign + b.String() + rest
 }
 
-// FormatMoneyPlain formats money without color but with sign prefix
+// Money formats a number as money with color based on sign.
+// Positive: green with + prefix. Negative: red. Zero: gray.
+func (f *formatOps) Money(value float64) string {
+	return signColored(value, f.MoneyPlain(value))
+}
+
+// MoneyPlain formats money without color but with sign prefix and
+// thousands separators: -1234.5 -> "-$1,234.50"
 func (f *formatOps) MoneyPlain(value float64) string {
-	formatted := fmt.Sprintf("$%.2f", value)
+	formatted := "$" + groupThousands(fmt.Sprintf("%.2f", math.Abs(value)))
 	if value > 0 {
 		return "+" + formatted
+	}
+	if value < 0 {
+		return "-" + formatted
 	}
 	return formatted
 }
 
-// FormatPercent formats a percentage with color
+// Percent formats a percentage with color
 func (f *formatOps) Percent(value float64) string {
-	formatted := fmt.Sprintf("%.1f%%", value)
-	
-	if !f.colorEnabled {
-		return formatted
-	}
-	
-	// Use fresh lipgloss styles to ensure proper reset
-	if value > 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+	return signColored(value, fmt.Sprintf("%.1f%%", value))
 }
 
-// FormatNumber formats a number with color based on sign
+// Number formats a number with color based on sign
 func (f *formatOps) Number(value float64, decimals int) string {
-	format := fmt.Sprintf("%%.%df", decimals)
-	formatted := fmt.Sprintf(format, value)
-	
-	if !f.colorEnabled {
-		if value > 0 {
-			return "+" + formatted
-		}
-		return formatted
-	}
-	
-	// Use fresh lipgloss styles to ensure proper reset
+	formatted := fmt.Sprintf("%.*f", decimals, value)
 	if value > 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("+" + formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
+		formatted = "+" + formatted
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+	return signColored(value, formatted)
 }
 
 // Package-level number formatting functions
@@ -352,147 +314,80 @@ func Number(value float64, decimals int) string {
 	return Format.Number(value, decimals)
 }
 
-// String converts any value to string using fmt.Sprint
-func String(v interface{}) string {
-	return fmt.Sprint(v)
+// String converts any values to a single string, space-separated.
+// The library's one conversion primitive: Assert, Format, Log and KEV
+// all build their messages through it.
+//
+//	String(42)                    // "42"
+//	String("port:", 8080)         // "port: 8080"
+func String(args ...interface{}) string {
+	s := fmt.Sprintln(args...)
+	return s[:len(s)-1]
 }
 
 // formatCurrencyOps provides currency formatting operations
 type formatCurrencyOps struct{}
 
-// Add Currency namespace to Format
-func (f *formatOps) Currency() *formatCurrencyOps {
-	return &formatCurrencyOps{}
-}
-
 // USD formats a value as USD with color based on sign
-func (fc *formatCurrencyOps) USD(value float64) string {
-	decimals := Currency.GetOptimalDecimals(value, "USD")
-	format := fmt.Sprintf("%%.%df", decimals)
-	formatted := "$" + fmt.Sprintf(format, math.Abs(value))
-	
-	if value > 0 {
-		formatted = "+" + formatted
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		formatted = "-" + formatted
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+func (fc formatCurrencyOps) USD(value float64) string {
+	return fc.Auto(value, "USD")
 }
 
 // BTC formats a value as Bitcoin with optimal decimals
-func (fc *formatCurrencyOps) BTC(value float64) string {
-	decimals := Currency.GetOptimalDecimals(value, "BTC")
-	format := fmt.Sprintf("%%.%df", decimals)
-	formatted := fmt.Sprintf(format, value) + " " + SymbolBTC
-	
-	if value > 0 {
-		formatted = "+" + formatted
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+func (fc formatCurrencyOps) BTC(value float64) string {
+	return fc.Auto(value, "BTC")
 }
 
 // ETH formats a value as Ethereum with optimal decimals
-func (fc *formatCurrencyOps) ETH(value float64) string {
-	decimals := Currency.GetOptimalDecimals(value, "ETH")
-	format := fmt.Sprintf("%%.%df", decimals)
-	formatted := fmt.Sprintf(format, value) + " " + SymbolETH
-	
+func (fc formatCurrencyOps) ETH(value float64) string {
+	return fc.Auto(value, "ETH")
+}
+
+// Auto formats a value with the appropriate currency symbol and decimals,
+// sign prefix, and sign-based color
+func (fc formatCurrencyOps) Auto(value float64, currencyCode string) string {
+	formatted := fc.Plain(value, currencyCode)
 	if value > 0 {
 		formatted = "+" + formatted
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+	return signColored(value, formatted)
 }
 
-// Auto formats a value with the appropriate currency symbol and decimals
-func (fc *formatCurrencyOps) Auto(value float64, currencyCode string) string {
+// Plain formats a value without color but with proper decimals and
+// thousands separators. Symbol before the amount for fiat/stablecoins,
+// after for crypto.
+func (fc formatCurrencyOps) Plain(value float64, currencyCode string) string {
 	decimals := Currency.GetOptimalDecimals(value, currencyCode)
-	format := fmt.Sprintf("%%.%df", decimals)
 	symbol := Currency.GetSymbol(currencyCode)
-	
-	var formatted string
-	// Put symbol before for fiat, after for crypto
-	if Currency.IsFiat(currencyCode) || Currency.IsStablecoin(currencyCode) {
-		formatted = symbol + fmt.Sprintf(format, math.Abs(value))
-		if value < 0 {
-			formatted = "-" + formatted
-		} else if value > 0 {
-			formatted = "+" + formatted
-		}
-	} else {
-		formatted = fmt.Sprintf(format, value)
-		if symbol != currencyCode {
-			formatted = formatted + " " + symbol
-		} else {
-			formatted = formatted + " " + currencyCode
-		}
-		if value > 0 {
-			formatted = "+" + formatted
-		}
-	}
-	
-	if value > 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
-}
 
-// Plain formats a value without color but with proper decimals
-func (fc *formatCurrencyOps) Plain(value float64, currencyCode string) string {
-	decimals := Currency.GetOptimalDecimals(value, currencyCode)
-	format := fmt.Sprintf("%%.%df", decimals)
-	symbol := Currency.GetSymbol(currencyCode)
-	
-	var formatted string
 	if Currency.IsFiat(currencyCode) || Currency.IsStablecoin(currencyCode) {
-		formatted = symbol + fmt.Sprintf(format, math.Abs(value))
+		formatted := symbol + groupThousands(fmt.Sprintf("%.*f", decimals, math.Abs(value)))
 		if value < 0 {
 			formatted = "-" + formatted
 		}
-	} else {
-		formatted = fmt.Sprintf(format, value)
-		if symbol != currencyCode {
-			formatted = formatted + " " + symbol
-		} else {
-			formatted = formatted + " " + currencyCode
-		}
+		return formatted
 	}
-	
-	return formatted
+
+	return groupThousands(fmt.Sprintf("%.*f", decimals, value)) + " " + symbol
 }
 
 // Percentage formats a percentage with color and optimal decimals
-func (fc *formatCurrencyOps) Percentage(value float64) string {
+func (fc formatCurrencyOps) Percentage(value float64) string {
 	decimals := 1
 	if math.Abs(value) < 0.1 {
 		decimals = 2
 	} else if math.Abs(value) >= 100 {
 		decimals = 0
 	}
-	
-	format := fmt.Sprintf("%%.%df", decimals)
-	formatted := fmt.Sprintf(format, value) + "%"
-	
+
+	formatted := fmt.Sprintf("%.*f%%", decimals, value)
 	if value > 0 {
 		formatted = "+" + formatted
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(formatted)
-	} else if value < 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(formatted)
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(formatted)
+	return signColored(value, formatted)
 }
 
 // PercentageChange formats the percentage change between two values with color
-func (fc *formatCurrencyOps) PercentageChange(oldValue, newValue float64) string {
-	change := Currency.PercentageChange(oldValue, newValue)
-	return fc.Percentage(change)
+func (fc formatCurrencyOps) PercentageChange(oldValue, newValue float64) string {
+	return fc.Percentage(Currency.PercentageChange(oldValue, newValue))
 }

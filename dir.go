@@ -35,7 +35,7 @@ func (dirOps) Remove(path string) {
 func (dirOps) List(path string) []string {
 	entries, err := os.ReadDir(path)
 	Check(err)
-	
+
 	names := make([]string, len(entries))
 	for i, entry := range entries {
 		names[i] = entry.Name()
@@ -56,12 +56,12 @@ func (d dirOps) ListFull(path string) []string {
 // Copy copies a directory recursively. Panics on error.
 func (d dirOps) Copy(src, dst string) {
 	d.Create(dst)
-	
+
 	entries := d.List(src)
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry)
 		dstPath := filepath.Join(dst, entry)
-		
+
 		if d.Exists(srcPath) {
 			d.Copy(srcPath, dstPath)
 		} else {

@@ -3,7 +3,7 @@ Queue provides a thread-safe work queue with automatic deduplication.
 
 Queue solves the common distributed systems problem of duplicate work:
   - API calls that shouldn't be made twice
-  - Background jobs that must run exactly once  
+  - Background jobs that must run exactly once
   - Event processing with at-most-once semantics
   - Resource operations that should be singleton
 
@@ -14,12 +14,12 @@ Example usage:
 		utils.WithMaxCompleted(500),
 		utils.WithQueueLogger(logger),
 	)
-	
+
 	// Start workers that return results
 	results := q.Process(ctx, 5, func(ctx context.Context, url string, req APIRequest) error {
 		return makeAPICall(ctx, url, req)
 	})
-	
+
 	// Handle results
 	go func() {
 		for result := range results {
@@ -28,7 +28,7 @@ Example usage:
 			}
 		}
 	}()
-	
+
 	// Enqueue work - duplicates automatically filtered
 	switch q.TryEnqueue("api.example.com", request1) {
 	case Enqueued:
@@ -57,6 +57,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,9 +77,9 @@ const (
 type EnqueueResult int
 
 const (
-	Enqueued EnqueueResult = iota  // Successfully enqueued
-	AlreadyQueued                   // Item already in queue (pending/in-flight)
-	QueueFull                       // Queue channel is at capacity
+	Enqueued      EnqueueResult = iota // Successfully enqueued
+	AlreadyQueued                      // Item already in queue (pending/in-flight)
+	QueueFull                          // Queue channel is at capacity
 )
 
 func (s QueueState) String() string {
@@ -115,32 +116,35 @@ type QueueMetrics interface {
 	RecordStateChange(from, to QueueState)
 }
 
-// Logger interface for queue operations
+// Logger interface for queue operations. Variadic args joined with
+// spaces, no format strings - go-utils' own Log satisfies it:
+//
+//	q := NewQueue[string, Work](100, WithQueueLogger[string, Work](Log))
 type Logger interface {
-	Debug(msg string, args ...interface{})
-	Info(msg string, args ...interface{})
-	Error(msg string, args ...interface{})
+	Debug(args ...interface{})
+	Info(args ...interface{})
+	Error(args ...interface{})
 }
 
 // Queue provides a thread-safe work queue with built-in deduplication.
 // Each unique key can only be queued once until it completes processing.
 type Queue[K comparable, V any] struct {
 	// Synchronization
-	mu         sync.RWMutex
-	work       chan queueItem[K, V]
-	state      map[K]QueueState
-	completedAt map[K]time.Time
-	
+	mu     sync.RWMutex
+	work   chan queueItem[K, V]
+	state  map[K]QueueState
+	doneAt map[K]time.Time // terminal (completed/failed) timestamps, for pruning
+
 	// Configuration
-	maxCompleted   int
-	metrics        QueueMetrics
-	logger         Logger
-	
+	maxCompleted int
+	metrics      QueueMetrics
+	logger       Logger
+
 	// Runtime stats
 	totalEnqueued  atomic.Int64
 	totalProcessed atomic.Int64
 	totalFailed    atomic.Int64
-	
+
 	// Shutdown
 	drainOnce sync.Once
 	drainCh   chan struct{}
@@ -148,8 +152,8 @@ type Queue[K comparable, V any] struct {
 
 // queueItem wraps work with a deduplication key
 type queueItem[K comparable, V any] struct {
-	Key   K
-	Value V
+	Key        K
+	Value      V
 	EnqueuedAt time.Time
 }
 
@@ -182,16 +186,16 @@ func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[
 	q := &Queue[K, V]{
 		work:         make(chan queueItem[K, V], bufferSize),
 		state:        make(map[K]QueueState),
-		completedAt:  make(map[K]time.Time),
+		doneAt:       make(map[K]time.Time),
 		maxCompleted: 1000, // Default
 		drainCh:      make(chan struct{}),
 	}
-	
+
 	// Apply options
 	for _, opt := range opts {
 		opt(q)
 	}
-	
+
 	return q
 }
 
@@ -199,22 +203,22 @@ func NewQueue[K comparable, V any](bufferSize int, opts ...Option[K, V]) *Queue[
 func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	
+
 	// Check if already pending or in-flight
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		if q.logger != nil {
-			q.logger.Debug("Queue: item already %s: %v", state, key)
+			q.logger.Debug("Queue: item already", state, ":", key)
 		}
 		if q.metrics != nil {
 			q.metrics.RecordEnqueue(false)
 		}
 		return AlreadyQueued
 	}
-	
+
 	// Mark as pending BEFORE channel send
-	oldState := q.state[key]
+	oldState, hadState := q.state[key]
 	q.state[key] = QueueStatePending
-	
+
 	// Try non-blocking send
 	select {
 	case q.work <- queueItem[K, V]{Key: key, Value: value, EnqueuedAt: time.Now()}:
@@ -222,26 +226,26 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 		if q.metrics != nil {
 			q.metrics.RecordEnqueue(true)
 			q.metrics.RecordQueueSize(len(q.work))
-			if oldState != QueueStatePending {
+			if hadState {
 				q.metrics.RecordStateChange(oldState, QueueStatePending)
 			}
 		}
 		if q.logger != nil {
-			q.logger.Debug("Queue: enqueued item: %v", key)
+			q.logger.Debug("Queue: enqueued item:", key)
 		}
 		return Enqueued
 	default:
 		// Queue full - rollback the pending mark
-		if oldState == 0 {
-			delete(q.state, key)
-		} else {
+		if hadState {
 			q.state[key] = oldState
+		} else {
+			delete(q.state, key)
 		}
 		if q.metrics != nil {
 			q.metrics.RecordEnqueue(false)
 		}
 		if q.logger != nil {
-			q.logger.Debug("Queue: queue full, cannot enqueue: %v", key)
+			q.logger.Debug("Queue: queue full, cannot enqueue:", key)
 		}
 		return QueueFull
 	}
@@ -250,34 +254,44 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 // TryEnqueueBatch attempts to enqueue multiple items, returns keys that were successfully enqueued
 func (q *Queue[K, V]) TryEnqueueBatch(items map[K]V) []K {
 	enqueued := make([]K, 0, len(items))
-	
+
 	for key, value := range items {
 		if q.TryEnqueue(key, value) == Enqueued {
 			enqueued = append(enqueued, key)
 		}
 	}
-	
+
 	return enqueued
 }
 
 // MustEnqueue enqueues work, blocking if queue is full (still deduplicates)
 func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 	q.mu.Lock()
-	
+
 	// Check if already pending or in-flight
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		q.mu.Unlock()
 		if q.logger != nil {
-			q.logger.Debug("Queue: item already %s, skipping: %v", state, key)
+			q.logger.Debug("Queue: item already", state, ", skipping:", key)
 		}
 		return nil // Already queued or being processed, not an error
 	}
-	
+
 	// Mark as pending
-	oldState := q.state[key]
+	oldState, hadState := q.state[key]
 	q.state[key] = QueueStatePending
 	q.mu.Unlock()
-	
+
+	rollback := func() {
+		q.mu.Lock()
+		if hadState {
+			q.state[key] = oldState
+		} else {
+			delete(q.state, key)
+		}
+		q.mu.Unlock()
+	}
+
 	// Blocking send
 	select {
 	case q.work <- queueItem[K, V]{Key: key, Value: value, EnqueuedAt: time.Now()}:
@@ -289,24 +303,10 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 		}
 		return nil
 	case <-ctx.Done():
-		// Rollback on context cancellation
-		q.mu.Lock()
-		if oldState == 0 {
-			delete(q.state, key)
-		} else {
-			q.state[key] = oldState
-		}
-		q.mu.Unlock()
+		rollback()
 		return ctx.Err()
 	case <-q.drainCh:
-		// Queue is draining
-		q.mu.Lock()
-		if oldState == 0 {
-			delete(q.state, key)
-		} else {
-			q.state[key] = oldState
-		}
-		q.mu.Unlock()
+		rollback()
 		return fmt.Errorf("queue is draining")
 	}
 }
@@ -314,7 +314,7 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 // Process starts workers that process items from the queue and returns a results channel
 func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[K, V]) <-chan Result[K] {
 	results := make(chan Result[K], workers)
-	
+
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -323,30 +323,30 @@ func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[
 			q.processWorker(ctx, handler, results, workerID)
 		}(i)
 	}
-	
+
 	// Close results channel when all workers done
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
-	
+
 	return results
 }
 
 // processWorker is the internal worker that processes queue items
 func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], results chan<- Result[K], workerID int) {
 	if q.logger != nil {
-		q.logger.Debug("Queue: worker %d started", workerID)
+		q.logger.Debug("Queue: worker", workerID, "started")
 	}
-	
+
 	for {
 		select {
 		case item := <-q.work:
 			q.processItem(ctx, item, handler, results)
-			
+
 		case <-ctx.Done():
 			if q.logger != nil {
-				q.logger.Debug("Queue: worker %d stopped (context done)", workerID)
+				q.logger.Debug("Queue: worker", workerID, "stopped (context done)")
 			}
 			return
 		case <-q.drainCh:
@@ -357,7 +357,7 @@ func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], 
 					q.processItem(ctx, item, handler, results)
 				default:
 					if q.logger != nil {
-						q.logger.Debug("Queue: worker %d stopped (drained)", workerID)
+						q.logger.Debug("Queue: worker", workerID, "stopped (drained)")
 					}
 					return
 				}
@@ -373,34 +373,38 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 	if q.metrics != nil {
 		q.metrics.RecordQueueSize(len(q.work))
 	}
-	
+
 	// Mark as in-flight
 	q.mu.Lock()
 	q.state[item.Key] = QueueStateInFlight
 	q.mu.Unlock()
-	
+
 	if q.metrics != nil {
 		q.metrics.RecordStateChange(QueueStatePending, QueueStateInFlight)
 	}
-	
+
 	// Process the work
 	start := time.Now()
 	err := handler(ctx, item.Key, item.Value)
 	duration := time.Since(start)
-	
-	// Update state based on result
+
+	// Update state based on result - both outcomes are terminal and
+	// tracked in doneAt so pruning bounds memory for failures too
 	q.mu.Lock()
 	if err == nil {
 		q.state[item.Key] = QueueStateCompleted
-		q.completedAt[item.Key] = time.Now()
 		q.totalProcessed.Add(1)
-		q.cleanupCompleted()
 	} else {
 		q.state[item.Key] = QueueStateFailed
 		q.totalFailed.Add(1)
 	}
+	q.doneAt[item.Key] = time.Now()
+	pruneDone(q.doneAt, q.maxCompleted, func(key K) {
+		delete(q.state, key)
+		delete(q.doneAt, key)
+	})
 	q.mu.Unlock()
-	
+
 	// Record metrics
 	if q.metrics != nil {
 		q.metrics.RecordDequeue(duration, err)
@@ -410,18 +414,16 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 			q.metrics.RecordStateChange(QueueStateInFlight, QueueStateFailed)
 		}
 	}
-	
+
 	// Log result
 	if q.logger != nil {
 		if err != nil {
-			q.logger.Error("Queue: item failed: key=%v wait=%v duration=%v error=%v", 
-				item.Key, waitTime, duration, err)
+			q.logger.Error("Queue: item failed:", item.Key, "wait:", waitTime, "duration:", duration, "error:", err)
 		} else {
-			q.logger.Debug("Queue: item completed: key=%v wait=%v duration=%v", 
-				item.Key, waitTime, duration)
+			q.logger.Debug("Queue: item completed:", item.Key, "wait:", waitTime, "duration:", duration)
 		}
 	}
-	
+
 	// Send result
 	select {
 	case results <- Result[K]{Key: item.Key, Error: err, Duration: duration}:
@@ -443,56 +445,41 @@ func (q *Queue[K, V]) ProcessWithRetry(ctx context.Context, workers int, handler
 					return ctx.Err()
 				}
 			}
-			
+
 			err = handler(ctx, key, value)
 			if err == nil {
 				return nil
 			}
-			
+
 			if q.logger != nil {
-				q.logger.Debug("Queue: retry attempt %d/%d for key=%v error=%v", 
-					attempt+1, maxRetries+1, key, err)
+				q.logger.Debug("Queue: retry attempt", attempt+1, "of", maxRetries+1, "for", key, "error:", err)
 			}
 		}
 		return err
 	}
-	
+
 	return q.Process(ctx, workers, retryHandler)
 }
 
-// cleanupCompleted removes old completed items if we exceed maxCompleted
-// Must be called with lock held
-func (q *Queue[K, V]) cleanupCompleted() {
-	if q.maxCompleted <= 0 || len(q.completedAt) <= q.maxCompleted {
+// pruneDone evicts the oldest terminal items once tracking exceeds max.
+// Shared by Queue and PriorityQueue. Must be called with lock held.
+func pruneDone[K comparable](doneAt map[K]time.Time, max int, evict func(K)) {
+	if max <= 0 || len(doneAt) <= max {
 		return
 	}
-	
-	// Find oldest completed items to remove
-	type completedItem struct {
-		key  K
-		time time.Time
+
+	type entry struct {
+		key K
+		t   time.Time
 	}
-	
-	items := make([]completedItem, 0, len(q.completedAt))
-	for k, t := range q.completedAt {
-		items = append(items, completedItem{key: k, time: t})
+	entries := make([]entry, 0, len(doneAt))
+	for k, t := range doneAt {
+		entries = append(entries, entry{key: k, t: t})
 	}
-	
-	// Sort by time (oldest first)
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[i].time.After(items[j].time) {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
-	
-	// Remove oldest items
-	toRemove := len(items) - q.maxCompleted
-	for i := 0; i < toRemove; i++ {
-		key := items[i].key
-		delete(q.state, key)
-		delete(q.completedAt, key)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].t.Before(entries[j].t) })
+
+	for _, e := range entries[:len(entries)-max] {
+		evict(e.key)
 	}
 }
 
@@ -501,7 +488,7 @@ func (q *Queue[K, V]) Drain() {
 	q.drainOnce.Do(func() {
 		close(q.drainCh)
 		if q.logger != nil {
-			q.logger.Info("Queue: draining with %d items remaining", len(q.work))
+			q.logger.Info("Queue: draining with", len(q.work), "items remaining")
 		}
 	})
 }
@@ -510,7 +497,7 @@ func (q *Queue[K, V]) Drain() {
 func (q *Queue[K, V]) GetState(key K) (QueueState, bool) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	
+
 	state, exists := q.state[key]
 	return state, exists
 }
@@ -519,23 +506,9 @@ func (q *Queue[K, V]) GetState(key K) (QueueState, bool) {
 func (q *Queue[K, V]) IsPending(key K) bool {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	
+
 	state, exists := q.state[key]
 	return exists && (state == QueueStatePending || state == QueueStateInFlight)
-}
-
-// Peek returns the next item without removing it from the queue
-func (q *Queue[K, V]) Peek() (K, V, bool) {
-	select {
-	case item := <-q.work:
-		// Put it back
-		q.work <- item
-		return item.Key, item.Value, true
-	default:
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV, false
-	}
 }
 
 // Size returns the current number of items in the queue channel
@@ -547,10 +520,10 @@ func (q *Queue[K, V]) Size() int {
 func (q *Queue[K, V]) Clear() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	
+
 	q.state = make(map[K]QueueState)
-	q.completedAt = make(map[K]time.Time)
-	
+	q.doneAt = make(map[K]time.Time)
+
 	if q.logger != nil {
 		q.logger.Info("Queue: cleared all state tracking")
 	}
@@ -572,14 +545,14 @@ type QueueStats struct {
 func (q *Queue[K, V]) Stats() QueueStats {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	
+
 	stats := QueueStats{
 		QueueSize:      len(q.work),
 		TotalEnqueued:  q.totalEnqueued.Load(),
 		TotalProcessed: q.totalProcessed.Load(),
 		TotalFailed:    q.totalFailed.Load(),
 	}
-	
+
 	for _, state := range q.state {
 		switch state {
 		case QueueStatePending:
@@ -592,6 +565,6 @@ func (q *Queue[K, V]) Stats() QueueStats {
 			stats.Failed++
 		}
 	}
-	
+
 	return stats
 }

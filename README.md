@@ -32,7 +32,7 @@ Dir.Create(XDG.State("notify"))        // Ensure the directory exists
 
 // Currency formatting with intelligent decimals
 price := 0.037473  // ETH/BTC
-Format.Currency.Auto(price, "BTC")  // "0.037473 ₿"
+Format.Currency.Auto(price, "BTC")  // "+0.037473 ₿" (green)
 Format.Currency.USD(1234.56)        // "+$1,234.56" (green)
 change := Currency.PercentageChange(100, 115)  // 15.0
 
@@ -133,7 +133,7 @@ req := &SearchParams{Limit: Ptr(10)}
 
 [**queue.go**](queue.go): Thread-safe work queue with automatic deduplication - Queue[K,V] ensures each key is queued at most once until completion. Perfect for API calls, background jobs, and event processing that must run exactly once. Features result channels, retry support, graceful drain, batch operations, and metrics hooks.
 
-[**priority_queue.go**](priority_queue.go): Dual-queue system with fairness guarantees and built-in skip-based backoff - PriorityQueue[K,V] maintains two permanent queues where priority items never demote. Features linear backoff via skip counts (items with skipCount > 0 are decremented and re-enqueued). Configurable fairness ratio (e.g., 2:1) ensures normal queue isn't starved. Queue and dispatcher start immediately, multiple Process() calls share same dispatcher. Perfect for connection retry logic, tiered service handling, critical infrastructure monitoring.
+[**priority_queue.go**](priority_queue.go): Dual-queue system with fairness guarantees and built-in skip-based backoff - PriorityQueue[K,V] maintains two permanent queues where priority items never demote. Features linear backoff via skip counts (items with skipCount > 0 are decremented and re-enqueued). Configurable fairness ratio (e.g., 2:1) ensures normal queue isn't starved. Dispatcher starts on first Process() call, multiple Process() calls share same dispatcher. Perfect for connection retry logic, tiered service handling, critical infrastructure monitoring.
 
 ## CLI Tools
 
@@ -149,6 +149,7 @@ go install github.com/adriangalilea/go-utils/cmd/go-check@latest
 go-check          # Run all checks (default)
 go-check fix      # Auto-fix issues  
 go-check dead     # Find dead code only
+go-check internal # Find unused unexported functions
 go-check --help   # Show help
 ```
 

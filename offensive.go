@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -57,7 +56,7 @@ func Assert(condition bool, msg ...interface{}) {
 	if !condition {
 		message := "assertion failed"
 		if len(msg) > 0 {
-			message = fmt.Sprint(msg...)
+			message = String(msg...)
 		}
 		panic(&Panic{Message: message})
 	}
@@ -94,7 +93,7 @@ func Check(err error, messages ...string) {
 	if err != nil {
 		message := err.Error()
 		if len(messages) > 0 {
-			message = strings.Join(messages, " ")
+			message = strings.Join(messages, " ") + ": " + err.Error()
 		}
 		panic(&Panic{Message: message})
 	}
