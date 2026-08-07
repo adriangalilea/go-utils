@@ -185,7 +185,7 @@ func NewPriorityQueue[K comparable, V any](prioritySize, normalSize, fairnessRat
 		fairnessRatio:    fairnessRatio,
 		maxCompleted:     1000, // Default
 		dispatcherDone:   make(chan struct{}),
-		log:              NewLogger("PRIORITY_QUEUE"),
+		log:              Log.Scope("priority-queue"),
 	}
 
 	pq.dispatcherCtx, pq.dispatcherCancel = context.WithCancel(context.Background())

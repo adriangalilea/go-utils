@@ -10,14 +10,14 @@ import (
 )
 
 var (
-	errorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
-	warnStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	eventStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
-	traceStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-	waitStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	infoStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	readyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
-	debugStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
+	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
+	warnStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	traceStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+	waitStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
+	infoStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
+	readyStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	debugStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
 
 	boldStyle    = lipgloss.NewStyle().Bold(true)
 	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
@@ -35,33 +35,36 @@ const (
 	msgTrace messageType = iota
 	msgDebug
 	msgInfo
-	msgEvent
+	msgSuccess
 	msgWait
 	msgReady
+	msgStep
 	msgWarn
 	msgError
 )
 
 var symbols = map[messageType]string{
-	msgWait:  "○",
-	msgError: "⨯",
-	msgWarn:  "⚠",
-	msgReady: "▶",
-	msgInfo:  " ",
-	msgEvent: "✓",
-	msgDebug: "◦",
-	msgTrace: "»",
+	msgWait:    "○",
+	msgError:   "⨯",
+	msgWarn:    "⚠",
+	msgReady:   "▶",
+	msgInfo:    " ",
+	msgSuccess: "✓",
+	msgStep:    "•",
+	msgDebug:   "◦",
+	msgTrace:   "»",
 }
 
 var symbolStyles = map[messageType]lipgloss.Style{
-	msgWait:  waitStyle,
-	msgError: errorStyle,
-	msgWarn:  warnStyle,
-	msgReady: readyStyle,
-	msgInfo:  infoStyle,
-	msgEvent: eventStyle,
-	msgDebug: debugStyle,
-	msgTrace: traceStyle,
+	msgWait:    waitStyle,
+	msgError:   errorStyle,
+	msgWarn:    warnStyle,
+	msgReady:   readyStyle,
+	msgInfo:    infoStyle,
+	msgSuccess: successStyle,
+	msgStep:    grayStyle,
+	msgDebug:   debugStyle,
+	msgTrace:   traceStyle,
 }
 
 type formatOps struct {
@@ -120,8 +123,8 @@ func (f *formatOps) Ready(args ...any) string {
 	return f.formatMessage(msgReady, args...)
 }
 
-func (f *formatOps) Event(args ...any) string {
-	return f.formatMessage(msgEvent, args...)
+func (f *formatOps) Success(args ...any) string {
+	return f.formatMessage(msgSuccess, args...)
 }
 
 func (f *formatOps) Debug(args ...any) string {
@@ -152,8 +155,8 @@ func Ready(args ...any) string {
 	return Format.Ready(args...)
 }
 
-func Event(args ...any) string {
-	return Format.Event(args...)
+func Success(args ...any) string {
+	return Format.Success(args...)
 }
 
 func Debug(args ...any) string {

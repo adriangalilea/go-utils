@@ -11,6 +11,12 @@ import . "github.com/adriangalilea/go-utils" //nolint:staticcheck
 config := Must(LoadConfig("config.json"))
 Assert(config.Port > 0, "invalid port")
 
+// Logging - symbols for a human at a TTY, timestamped record lines in a file,
+// decided automatically (LOG_FORMAT / LOG_TIME force it)
+Log.Success("transcode complete")
+theater := Log.Scope("theater")        // prints [theater], obeys THEATER_LOG_LEVEL
+theater.Error("scan failed:", err)     // 2026-08-07T12:34:56Z ERROR [theater] scan failed: EOF
+
 // Redis-style env vars
 apiKey := KEV.Get("API_KEY")      // memory → os → .env
 port := KEV.Int("PORT", 8080)
@@ -120,9 +126,9 @@ req := &SearchParams{Limit: Ptr(10)}
 
 [**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, panics with `*Panic` via Check().
 
-[**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Event(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
+[**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Success(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
 
-[**logger.go**](logger.go): Log namespace with level filtering via KEV.Get("LOG_LEVEL") - Error(), Warn(), Info(), Event(), Wait(), Ready(), Debug(), Trace(). Everything writes to stderr — stdout stays clean for data, so piping a tool's output never chokes on a log line. Includes WarnOnce() for stateful warning deduplication.
+[**logger.go**](logger.go): Log namespace with two renderings decided automatically: symbols and color when stderr is a TTY, `2026-08-07T12:34:56Z WARN  [scope] message` when it is not (`LOG_FORMAT=human|record` and `LOG_TIME=1|0` override; human time is a dim local clock). Levels filter via LOG_LEVEL, and Log.Scope("theater") makes a child that prints [theater] and obeys THEATER_LOG_LEVEL first. Error(), Warn(), WarnOnce(), Info(), Success(), Wait(), Ready(), Step(), Debug(), Trace(). Everything writes to stderr: stdout stays clean for data, so piping a tool's output never chokes on a log line. The record line is byte-identical with ts-utils and py-utils, so mixed-language log files share one grep surface.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 
