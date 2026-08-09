@@ -64,7 +64,7 @@ pq.TryEnqueue("normal", work, false)       // Normal queue
 pq.TryEnqueue("retry", work, true, failures)  // With linear backoff (skip 'failures' times)
 ```
 
-Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **py-utils**.
+Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **[py-utils](https://github.com/adriangalilea/py-utils)**. The logging doctrine the three share, and the harness that proves they emit the same record line, live in **[utils](https://github.com/adriangalilea/utils)**.
 
 ## Files
 
