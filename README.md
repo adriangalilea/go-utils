@@ -46,6 +46,7 @@ change := Currency.PercentageChange(100, 115)  // 15.0
 // Byte counts, decimal SI like drives and `df -H` (the twin of @adriangalilea/utils bytes())
 Bytes(850_000_000_000)  // "850.0 GB"
 Bytes(4096)             // "4096 B"
+Bytes(400 * GB)         // "400.0 GB" — a size stated in GB converts with GB
 
 // Queue with automatic deduplication
 q := NewQueue[string, Work](100)

@@ -23,4 +23,7 @@ func TestBytes(t *testing.T) {
 			t.Errorf("Bytes(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
+	if got := Bytes(400 * GB); got != "400.0 GB" {
+		t.Errorf("a stated 400 GB prints %q", got)
+	}
 }

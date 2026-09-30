@@ -267,6 +267,11 @@ func (f *formatOps) Number(value float64, decimals int) string {
 	return signColored(value, formatted)
 }
 
+// GB is the gigabyte Bytes prints: a size stated in GB (a config's
+// budget_gb, a disk floor) converts with n * GB, so the figure it prints is
+// the figure that was stated.
+const GB int64 = 1_000_000_000
+
 // Bytes: 850_000_000_000 -> "850.0 GB", 12_700_000_000_000 -> "12.7 TB",
 // 500_000_000 -> "500.0 MB", 4096 -> "4096 B". Decimal SI prefixes, the way
 // drives, SMART tools and `df -H` quote capacities; below 1 MB the raw byte
