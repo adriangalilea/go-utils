@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -264,6 +265,32 @@ func (f *formatOps) Number(value float64, decimals int) string {
 		formatted = "+" + formatted
 	}
 	return signColored(value, formatted)
+}
+
+// Bytes: 850_000_000_000 -> "850.0 GB", 12_700_000_000_000 -> "12.7 TB",
+// 500_000_000 -> "500.0 MB", 4096 -> "4096 B". Decimal SI prefixes, the way
+// drives, SMART tools and `df -H` quote capacities; below 1 MB the raw byte
+// count is the honest answer. The twin of @adriangalilea/utils `bytes()`.
+func (f *formatOps) Bytes(n int64) string {
+	Assert(n >= 0, "negative byte count:", n)
+	v := float64(n)
+	switch {
+	case v < 1e6:
+		return strconv.FormatInt(n, 10) + " B"
+	case v < 1e9:
+		return oneDecimal(v/1e6) + " MB"
+	case v < 1e12:
+		return oneDecimal(v/1e9) + " GB"
+	case v < 1e15:
+		return oneDecimal(v/1e12) + " TB"
+	}
+	return oneDecimal(v/1e15) + " PB"
+}
+
+func oneDecimal(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
+
+func Bytes(n int64) string {
+	return Format.Bytes(n)
 }
 
 func Money(value float64) string {

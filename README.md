@@ -43,6 +43,10 @@ Format.Currency.Auto(price, "BTC")  // "+0.037473 ₿" (green)
 Format.Currency.USD(1234.56)        // "+$1,234.56" (green)
 change := Currency.PercentageChange(100, 115)  // 15.0
 
+// Byte counts, decimal SI like drives and `df -H` (the twin of @adriangalilea/utils bytes())
+Bytes(850_000_000_000)  // "850.0 GB"
+Bytes(4096)             // "4096 B"
+
 // Queue with automatic deduplication
 q := NewQueue[string, Work](100)
 results := q.Process(ctx, 5, func(ctx context.Context, url string, work Work) error {
