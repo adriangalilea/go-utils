@@ -270,8 +270,8 @@ func TestHiddenSpanReparenting(t *testing.T) {
 	if want := "00-" + request.TraceID + "-" + request.SpanID + "-01"; hidden.Traceparent() != want {
 		t.Fatalf("hidden traceparent %s, want %s", hidden.Traceparent(), want)
 	}
-	if alone.SpanID != "" || alone.TraceID != lonely.trace {
-		t.Fatalf("no shown ancestor: the trace without a span: %+v", alone)
+	if alone.SpanID != "" || alone.TraceID != "" {
+		t.Fatalf("no shown ancestor: a line carries no ids, like one outside any span: %+v", alone)
 	}
 	if want := "00-" + lonely.trace + "-" + lonely.id + "-01"; lonely.Traceparent() != want {
 		t.Fatalf("no shown ancestor: own id %s, want %s", lonely.Traceparent(), want)

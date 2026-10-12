@@ -190,10 +190,11 @@ func (l *Logger) line(v stream.Verb, msg string, fields []F) {
 }
 
 // write emits a line. Inside a span it carries the trace and the nearest
-// span that was shown.
+// span that was shown; with none shown it carries no ids, like a line
+// outside any span.
 func (l *Logger) write(v stream.Verb, msg string, f F) {
 	e := l.event(v, msg)
-	if s := l.span; s != nil {
+	if s := l.span; s != nil && s.anchor != "" {
 		e.TraceID = s.trace
 		e.SpanID = s.anchor
 	}
