@@ -1,0 +1,10 @@
+{"time":"2026-10-12T12:20:39.100Z","level":"info","verb":"info","msg":"daemon starting","service":"checkout"}
+{"time":"2026-10-12T12:20:39.101Z","level":"info","verb":"wait","msg":"charge","service":"checkout","scope":["payments"],"phase":"start","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","fields":{"amount":1200}}
+{"time":"2026-10-12T12:20:39.123Z","level":"warn","verb":"warn","msg":"retrying","service":"checkout","scope":["payments"],"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","fields":{"attempt":2,"reason":"gateway timeout"}}
+{"time":"2026-10-12T12:20:39.124Z","level":"info","verb":"wait","msg":"stripe","service":"worker","scope":["payments","stripe"],"phase":"start","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"b7ad6b7169203331","parent_id":"00f067aa0ba902b7"}
+{"time":"2026-10-12T12:20:39.200Z","level":"error","verb":"fail","msg":"stripe","service":"worker","scope":["payments","stripe"],"phase":"end","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"b7ad6b7169203331","parent_id":"00f067aa0ba902b7","status":"error","dur_ms":76.25,"fields":{"err":{"type":"SourcedError","message":"card declined","stack":"SourcedError: [stripe:charge status=402] card declined\n    at charge (worker.ts:12:11)\n    at main (worker.ts:30:3)","source":"stripe","operation":"charge","status":402}}}
+panic: runtime error: index out of range [3] with length 3
+{"level":"info","msg":"not an event, no time"}
+{"time":"2026-10-12T12:20:39.355Z","level":"info","verb":"success","msg":"charge","service":"checkout","scope":["payments"],"phase":"end","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","status":"ok","dur_ms":254.123,"fields":{"amount":1200,"receipt":"r_1"}}
+{"time":"2026-10-12T12:20:40.000Z","level":"debug","verb":"debug","msg":"pool warm","service":"checkout","scope":["db"],"fields":{"conns":8}}
+{"time":"2026-10-12T12:20:41.000Z","level":"info","verb":"step","msg":"migrated","service":"checkout","fields":{"tables":["a","b"]}}

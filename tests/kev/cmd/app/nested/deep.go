@@ -5,20 +5,16 @@ import (
 )
 
 func main() {
-	utils.Log.Info("=== Running from cmd/app/nested (deep) ===")
-	utils.Log.Info("Sources:", utils.KEV.Source.List())
-	
+	utils.Log.Info("running from cmd/app/nested (deep)", utils.F{"sources": utils.KEV.Source.List()})
+
 	// Should still find project root
-	projectRoot := utils.KEV.Get("PROJECT_ROOT")
-	utils.Log.Info("PROJECT_ROOT =", projectRoot)
-	
+	utils.Log.Info("read", utils.F{"key": "PROJECT_ROOT", "value": utils.KEV.Get("PROJECT_ROOT")})
+
 	// Should NOT find cmd level (no .env in current or parent)
-	cmdLevel := utils.KEV.Get("CMD_LEVEL") 
-	utils.Log.Info("CMD_LEVEL =", cmdLevel, "(should be empty)")
-	
+	utils.Log.Info("read, should be empty", utils.F{"key": "CMD_LEVEL", "value": utils.KEV.Get("CMD_LEVEL")})
+
 	// Should get from project root
-	testKey := utils.KEV.Get("TEST_KEY")
-	utils.Log.Info("TEST_KEY =", testKey)
-	
-	utils.Log.Info("\nProject root still found from deep nesting!")
+	utils.Log.Info("read", utils.F{"key": "TEST_KEY", "value": utils.KEV.Get("TEST_KEY")})
+
+	utils.Log.Success("project root found from deep nesting")
 }

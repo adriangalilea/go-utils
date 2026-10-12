@@ -1,0 +1,10 @@
+2026-10-12T12:20:39.100Z INFO  daemon starting
+2026-10-12T12:20:39.101Z INFO  [payments] charge amount=1200
+2026-10-12T12:20:39.123Z WARN  [payments] retrying attempt=2 reason="gateway timeout"
+2026-10-12T12:20:39.124Z INFO  [payments stripe] stripe
+2026-10-12T12:20:39.200Z ERROR [payments stripe] stripe err="card declined" dur_ms=76.25
+panic: runtime error: index out of range [3] with length 3
+{"level":"info","msg":"not an event, no time"}
+2026-10-12T12:20:39.355Z INFO  [payments] charge amount=1200 receipt=r_1 dur_ms=254.123
+2026-10-12T12:20:40.000Z DEBUG [db] pool warm conns=8
+2026-10-12T12:20:41.000Z INFO  migrated tables=["a","b"]

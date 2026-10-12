@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,9 @@ import (
 //   Check(err, ...msg)         - check error-only returns
 //   Deref[T](ptr, fallback) T  - unwrap pointer or use fallback (messy world boundary)
 //   Ptr[T](val) *T             - address-of literal (construct optional fields)
+//
+// And one error type for what is not a bug: SourcedError, a boundary failure
+// with its source, operation, status and context.
 //
 // All panic with Panic type — distinguishes bugs from runtime errors:
 //
@@ -42,6 +46,36 @@ type Panic struct {
 func (p *Panic) Error() string {
 	return p.Message
 }
+
+// SourcedError is the world failing, not the program: a boundary with the
+// messy world (an HTTP API, a database, a process) that refused. It carries
+// which system, which operation, the status when there is one (0: none), the
+// underlying error and the context needed to reconstruct the failure without
+// a debugger. Panics are bugs; SourcedErrors are handled. The twin of
+// SourcedError in ts-utils and py-utils, and logged the same way: as a field
+// value it writes source, operation, status and context after its message.
+//
+//	return &SourcedError{Source: "stripe", Operation: "charge", Message: "card declined",
+//	    Status: 402, Cause: err, Context: map[string]any{"customer": id}}
+type SourcedError struct {
+	Source    string
+	Operation string
+	Message   string
+	Status    int
+	Cause     error
+	Context   map[string]any
+}
+
+// Error reads "[stripe:charge status=402] card declined".
+func (e *SourcedError) Error() string {
+	head := e.Source + ":" + e.Operation
+	if e.Status != 0 {
+		head += " status=" + strconv.Itoa(e.Status)
+	}
+	return "[" + head + "] " + e.Message
+}
+
+func (e *SourcedError) Unwrap() error { return e.Cause }
 
 // Assert panics if condition is false.
 // Use for validating preconditions and invariants.

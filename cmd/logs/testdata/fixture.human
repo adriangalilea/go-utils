@@ -1,0 +1,13 @@
+12:20:39   daemon starting
+12:20:39 ○ [payments] charge amount=1200
+12:20:39   ⚠ [payments] retrying attempt=2 reason="gateway timeout"
+12:20:39   ○ [payments stripe] stripe
+12:20:39   ⨯ [payments stripe] stripe 76ms err="card declined"
+               SourcedError: [stripe:charge status=402] card declined
+                   at charge (worker.ts:12:11)
+                   at main (worker.ts:30:3)
+panic: runtime error: index out of range [3] with length 3
+{"level":"info","msg":"not an event, no time"}
+12:20:39 ✓ [payments] charge 254ms amount=1200 receipt=r_1
+12:20:40 ◦ [db] pool warm conns=8
+12:20:41   • migrated tables=["a","b"]

@@ -11,15 +11,6 @@ import (
 )
 
 var (
-	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
-	warnStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	successStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
-	traceStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
-	waitStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	infoStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("7"))
-	readyStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
-	debugStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
-
 	boldStyle    = lipgloss.NewStyle().Bold(true)
 	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	greenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
@@ -30,52 +21,14 @@ var (
 	grayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
-type messageType int
-
-const (
-	msgTrace messageType = iota
-	msgDebug
-	msgInfo
-	msgSuccess
-	msgWait
-	msgReady
-	msgStep
-	msgWarn
-	msgError
-)
-
-var symbols = map[messageType]string{
-	msgWait:    "○",
-	msgError:   "⨯",
-	msgWarn:    "⚠",
-	msgReady:   "▶",
-	msgInfo:    " ",
-	msgSuccess: "✓",
-	msgStep:    "•",
-	msgDebug:   "◦",
-	msgTrace:   "»",
-}
-
-var symbolStyles = map[messageType]lipgloss.Style{
-	msgWait:    waitStyle,
-	msgError:   errorStyle,
-	msgWarn:    warnStyle,
-	msgReady:   readyStyle,
-	msgInfo:    infoStyle,
-	msgSuccess: successStyle,
-	msgStep:    grayStyle,
-	msgDebug:   debugStyle,
-	msgTrace:   traceStyle,
-}
-
 type formatOps struct {
 	colorEnabled bool
 
 	Currency formatCurrencyOps
 }
 
-// Format returns styled strings without printing - built for TUI views
-// (Bubbletea) and for Log, which handles the actual output.
+// Format returns styled strings without printing, for TUI views (Bubbletea)
+// and CLI output: colours, money, percentages, byte counts, currencies.
 var Format = &formatOps{}
 
 func init() {
@@ -91,81 +44,6 @@ func shouldEnableColor() bool {
 		return true
 	}
 	return true
-}
-
-func (f *formatOps) formatMessage(msgType messageType, args ...any) string {
-	message := String(args...)
-
-	symbol := symbols[msgType]
-	if f.colorEnabled {
-		symbol = symbolStyles[msgType].Render(symbol)
-	}
-
-	return symbol + " " + message
-}
-
-func (f *formatOps) Error(args ...any) string {
-	return f.formatMessage(msgError, args...)
-}
-
-func (f *formatOps) Warn(args ...any) string {
-	return f.formatMessage(msgWarn, args...)
-}
-
-func (f *formatOps) Info(args ...any) string {
-	return f.formatMessage(msgInfo, args...)
-}
-
-func (f *formatOps) Wait(args ...any) string {
-	return f.formatMessage(msgWait, args...)
-}
-
-func (f *formatOps) Ready(args ...any) string {
-	return f.formatMessage(msgReady, args...)
-}
-
-func (f *formatOps) Success(args ...any) string {
-	return f.formatMessage(msgSuccess, args...)
-}
-
-func (f *formatOps) Debug(args ...any) string {
-	return f.formatMessage(msgDebug, args...)
-}
-
-func (f *formatOps) Trace(args ...any) string {
-	return f.formatMessage(msgTrace, args...)
-}
-
-func Error(args ...any) string {
-	return Format.Error(args...)
-}
-
-func Warn(args ...any) string {
-	return Format.Warn(args...)
-}
-
-func Info(args ...any) string {
-	return Format.Info(args...)
-}
-
-func Wait(args ...any) string {
-	return Format.Wait(args...)
-}
-
-func Ready(args ...any) string {
-	return Format.Ready(args...)
-}
-
-func Success(args ...any) string {
-	return Format.Success(args...)
-}
-
-func Debug(args ...any) string {
-	return Format.Debug(args...)
-}
-
-func Trace(args ...any) string {
-	return Format.Trace(args...)
 }
 
 func (f *formatOps) Bold(text string) string {
@@ -315,8 +193,8 @@ func Number(value float64, decimals int) string {
 }
 
 // String converts any values to a single string, space-separated.
-// The library's one conversion primitive: Assert, Format, Log and KEV
-// all build their messages through it.
+// The library's one conversion primitive: Assert, Panic messages and KEV
+// build their text through it.
 //
 //	String(42)                    // "42"
 //	String("port:", 8080)         // "port: 8080"

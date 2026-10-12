@@ -29,7 +29,7 @@ var fixCmd = &cobra.Command{
 
 		runCommand("golangci-lint", "run", "--fix")
 		runCommand("gofmt", "-w", ".")
-		Log.Ready("Fixed what I could")
+		Log.Success("fixed what could be fixed")
 	},
 }
 
@@ -38,10 +38,8 @@ var deadCmd = &cobra.Command{
 	Short: "Find dead code (shows all for libraries)",
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureTools()
-		Log.Info("🔍 Running deadcode...")
-		Log.Info("Note: In libraries, exported functions will show as 'unreachable'")
-		Log.Info("Look for unexported functions - those might be truly dead")
-		Log.Info("")
+		Log.Wait("running deadcode")
+		Log.Step("in a library, exported functions show as unreachable; unexported ones may be truly dead")
 		runCommand("deadcode", "./...")
 	},
 }
@@ -51,9 +49,7 @@ var internalCmd = &cobra.Command{
 	Short: "Check for unused unexported functions",
 	Run: func(cmd *cobra.Command, args []string) {
 		ensureTools()
-		Log.Info("🔍 Checking for unused unexported functions...")
-		Log.Info("These are more likely to be truly dead code:")
-		Log.Info("")
+		Log.Wait("checking for unused unexported functions, the likely dead code")
 
 		deadcodeCmd := exec.Command("deadcode", "./...")
 		output, _ := deadcodeCmd.Output()
@@ -72,7 +68,7 @@ var internalCmd = &cobra.Command{
 				if lastDot != -1 && lastDot < len(funcName)-1 {
 					firstChar := funcName[lastDot+1]
 					if firstChar >= 'a' && firstChar <= 'z' {
-						Log.Warn(line)
+						Log.Warn("unused unexported function", F{"at": line})
 						hasDeadCode = true
 					}
 				}
@@ -80,9 +76,9 @@ var internalCmd = &cobra.Command{
 		}
 
 		if !hasDeadCode {
-			Log.Ready("✅ No dead unexported functions found")
+			Log.Success("no dead unexported functions")
 		} else {
-			Log.Error("Found potentially dead unexported functions")
+			Log.Error("found potentially dead unexported functions")
 		}
 	},
 }
@@ -99,30 +95,25 @@ func runChecks() {
 	ensureTools()
 
 	// Check for go-utils import issues first
-	Log.Info("🔍 Checking go-utils imports...")
+	Log.Wait("checking go-utils imports")
 	goUtilsIssues := checkGoUtilsImports()
 	if goUtilsIssues {
-		Log.Info("")
-		Log.Info("Tip: Run 'go-check fix' to automatically add //nolint:staticcheck")
+		Log.Step("go-check fix adds //nolint:staticcheck to them")
 	}
 
-	Log.Info("")
-	Log.Info("🔍 Running golangci-lint...")
+	Log.Wait("running golangci-lint")
 	linterFailed := !runCommand("golangci-lint", "run")
 
-	Log.Info("")
-	Log.Info("🔍 Running deadcode...")
-	Log.Info("(Note: Public APIs will show as 'unreachable' - this is expected for libraries)")
+	Log.Wait("running deadcode")
+	Log.Step("in a library, exported functions show as unreachable")
 	deadFailed := !runCommand("deadcode", "./...")
 
 	if goUtilsIssues || linterFailed || deadFailed {
-		Log.Error("")
-		Log.Error("❌ Issues found")
+		Log.Error("issues found")
 		os.Exit(1)
 	}
 
-	Log.Info("")
-	Log.Ready("✅ All checks passed")
+	Log.Success("all checks passed")
 }
 
 func ensureTools() {
@@ -133,7 +124,7 @@ func ensureTools() {
 
 	for tool, pkg := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
-			Log.Wait("📦 Installing", tool)
+			Log.Wait("installing", F{"tool": tool})
 			cmd := exec.Command("go", "install", pkg)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -182,8 +173,7 @@ func checkGoUtilsImports() bool {
 			for scanner.Scan() {
 				lineNum++
 				if isDotImportWithoutNolint(scanner.Text()) {
-					Log.Warn(path + ":" + String(lineNum) + ": dot import of go-utils without //nolint:staticcheck")
-					Log.Info("  Fix: Add '//nolint:staticcheck' to the import line")
+					Log.Warn("dot import of go-utils without //nolint:staticcheck", F{"file": path, "line": lineNum})
 					hasIssues = true
 				}
 			}
@@ -218,7 +208,7 @@ func fixGoUtilsImports() {
 			}
 			if fixed {
 				File.Write(path, []byte(strings.Join(lines, "\n")))
-				Log.Info("Fixed:", path)
+				Log.Step("fixed", F{"file": path})
 				fixedCount++
 			}
 		}
@@ -228,6 +218,6 @@ func fixGoUtilsImports() {
 	Check(err)
 
 	if fixedCount > 0 {
-		Log.Ready("Fixed", fixedCount, "go-utils import(s)")
+		Log.Success("fixed go-utils imports", F{"count": fixedCount})
 	}
 }

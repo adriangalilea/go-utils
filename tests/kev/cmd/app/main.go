@@ -5,24 +5,19 @@ import (
 )
 
 func main() {
-	utils.Log.Info("=== Running from cmd/app ===")
-	utils.Log.Info("Sources:", utils.KEV.Source.List())
-	
+	utils.Log.Info("running from cmd/app", utils.F{"sources": utils.KEV.Source.List()})
+
 	// Should find project root
-	projectRoot := utils.KEV.Get("PROJECT_ROOT")
-	utils.Log.Info("PROJECT_ROOT =", projectRoot)
-	
+	utils.Log.Info("read", utils.F{"key": "PROJECT_ROOT", "value": utils.KEV.Get("PROJECT_ROOT")})
+
 	// Should find cmd level
-	cmdLevel := utils.KEV.Get("CMD_LEVEL") 
-	utils.Log.Info("CMD_LEVEL =", cmdLevel)
-	
+	utils.Log.Info("read", utils.F{"key": "CMD_LEVEL", "value": utils.KEV.Get("CMD_LEVEL")})
+
 	// Test precedence - local .env should win
-	shared := utils.KEV.Get("SHARED_KEY")
-	utils.Log.Info("SHARED_KEY =", shared)
-	
+	utils.Log.Info("read", utils.F{"key": "SHARED_KEY", "value": utils.KEV.Get("SHARED_KEY")})
+
 	// Show where they came from
-	utils.Log.Info("\nSource tracking:")
-	utils.Log.Info("PROJECT_ROOT from:", utils.KEV.SourceOf("PROJECT_ROOT"))
-	utils.Log.Info("CMD_LEVEL from:", utils.KEV.SourceOf("CMD_LEVEL"))
-	utils.Log.Info("SHARED_KEY from:", utils.KEV.SourceOf("SHARED_KEY"))
+	for _, key := range []string{"PROJECT_ROOT", "CMD_LEVEL", "SHARED_KEY"} {
+		utils.Log.Info("source", utils.F{"key": key, "from": utils.KEV.SourceOf(key)})
+	}
 }

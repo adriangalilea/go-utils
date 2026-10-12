@@ -11,11 +11,12 @@ import . "github.com/adriangalilea/go-utils" //nolint:staticcheck
 config := Must(LoadConfig("config.json"))
 Assert(config.Port > 0, "invalid port")
 
-// Logging - symbols for a human at a TTY, timestamped record lines in a file,
-// decided automatically (LOG_FORMAT / LOG_TIME force it)
-Log.Success("transcode complete")
-theater := Log.Scope("theater")        // prints [theater], obeys THEATER_LOG_LEVEL
-theater.Error("scan failed:", err)     // 2026-08-07T12:34:56Z ERROR [theater] scan failed: EOF
+// Logging: a message, then fields. Symbols at a terminal, JSON events elsewhere
+Log.Success("transcode complete", F{"file": name})
+theater := Log.Scope("theater")                  // scope ["theater"], obeys THEATER_LOG_LEVEL
+theater.Error("scan failed", F{"err": err})      // ⨯ [theater] scan failed err=EOF
+s := Log.Span("sync", F{"repo": repo})           // ○ sync repo=ui … ✓ sync 254ms
+defer s.End(&err)
 
 // Redis-style env vars
 apiKey := KEV.Get("API_KEY")      // memory → os → .env
@@ -69,13 +70,13 @@ pq.TryEnqueue("normal", work, false)       // Normal queue
 pq.TryEnqueue("retry", work, true, failures)  // With linear backoff (skip 'failures' times)
 ```
 
-Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **[py-utils](https://github.com/adriangalilea/py-utils)**. The logging doctrine the three share, and the harness that proves they emit the same record line, live in **[utils](https://github.com/adriangalilea/utils)**.
+Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **[py-utils](https://github.com/adriangalilea/py-utils)**. The logging contract the three share, and the harness that proves they write the same event stream byte for byte, live in **[utils](https://github.com/adriangalilea/utils)**.
 
 ## Files
 
 [**kev.go**](kev.go): Redis-style KV store for environment variables with namespace support (os:KEY, .env:KEY), memory caching, source fallback chains, pattern matching, and type conversions. Future: memory encryption and .kenv format.
 
-[**offensive.go**](offensive.go): Offensive programming primitives. All panic with `*Panic` type instead of `os.Exit(1)`: full stack traces, testable via `recover()`, distinguishable from runtime errors at catch boundaries.
+[**offensive.go**](offensive.go): Offensive programming primitives. All panic with `*Panic` type instead of `os.Exit(1)`: full stack traces, testable via `recover()`, distinguishable from runtime errors at catch boundaries. Plus `SourcedError`, the one error type for what is not a bug: a boundary failure with its source, operation, status and context, logged with all of them.
 
 ```go
 // Assert — invariant checking
@@ -131,9 +132,34 @@ req := &SearchParams{Limit: Ptr(10)}
 
 [**dir.go**](dir.go): Directory operations that panic on error — Create(), Exists(), Remove(), List(), ListFull(), Copy(), Current(), Change(). Clean namespace, panics with `*Panic` via Check().
 
-[**formatter.go**](formatter.go): String formatting utilities under Format namespace - Error(), Warn(), Info(), Wait(), Ready(), Success(), Trace() return formatted strings for TUI use (Bubbletea views). Includes Format.Currency for intelligent crypto/fiat formatting.
+[**formatter.go**](formatter.go): Styled strings under the Format namespace for TUI views (Bubbletea) and CLI output: colours, Money(), Percent(), Number(), Bytes(), and Format.Currency for crypto/fiat amounts with sensible decimals.
 
-[**logger.go**](logger.go): Log namespace with two renderings decided automatically: symbols and color when stderr is a TTY, `2026-08-07T12:34:56Z WARN  [scope] message` when it is not (`LOG_FORMAT=human|record` and `LOG_TIME=1|0` override; human time is a dim local clock). Levels filter via LOG_LEVEL, and Log.Scope("theater") makes a child that prints [theater] and obeys THEATER_LOG_LEVEL first. Error(), Warn(), WarnOnce(), Info(), Success(), Wait(), Ready(), Step(), Debug(), Trace(). Everything writes to stderr: stdout stays clean for data, so piping a tool's output never chokes on a log line. The record line is byte-identical with ts-utils and py-utils, so mixed-language log files share one grep surface.
+[**logger.go**](logger.go): `Log`, the event stream of the [logging contract](https://github.com/adriangalilea/utils#the-logging-contract), the same one ts-utils and py-utils write, so a Go daemon, a TypeScript worker and a Python script can be read, merged and traced together. Every verb takes a message, then at most one `F` of fields:
+
+```go
+Log.Info("ready")
+Log.Warn("retrying", F{"attempt": 2})
+Log.Error("charge failed", F{"err": err})   // err: type, message, its Unwrap chain as cause
+```
+
+The verbs say what happened and each has a fixed level: `Error` and `Fail` (error), `Warn` and `WarnOnce` (warn, once per message and scope), `Info`, `Success`, `Wait`, `Ready`, `Step` (info), `Debug`, `Trace`. Passing two `F` panics.
+
+`Log.Scope("api").Scope("auth")` is the subsystem: its events carry `scope: ["api","auth"]` and filter by `API_AUTH_LOG_LEVEL`, then `API_LOG_LEVEL`, then `LOG_LEVEL`, then `SetLogLevel`, then info (`silent < error < warn < info < debug < trace`, any case, read live through KEV so `.env` works).
+
+A span is a piece of work, and a span is a logger: it has every verb, `Span` (a child), `Set` (fields learned while it runs) and `Traceparent()`. It ends with the function, failed when the function returns an error:
+
+```go
+func charge(amount int) (err error) {
+    s := Log.Span("charge", F{"amount": amount})   // ○ charge amount=1200
+    defer s.End(&err)                               // ✓ charge 254ms, or ⨯ with fields.err
+    s.Warn("retrying", F{"attempt": 2})             // indented under the span
+    return stripe(s)                                // pass the span on: there is no context.Context
+}
+```
+
+A trace crosses processes explicitly: hand on `s.Traceparent()` in an HTTP `traceparent` header or a `TRACEPARENT` variable; `Log.Join(r.Header.Get("traceparent"))` continues it, and a process started with `TRACEPARENT` set continues it for its root spans. A span hidden by its level writes neither start nor end; what it holds belongs to the nearest span that is shown.
+
+Everything goes to stderr, stdout stays data. `LOG_FORMAT=json` writes one JSON event per line in the contract's key order, `human` writes symbols, colour, dim `key=value` fields, error stacks and indented spans; the default is human when stderr is a terminal and json otherwise. `LOG_TIME=1` opens human lines with a dim local `HH:MM:SS`. `LOG_SERVICE` names the program in every event (default: the executable's name). Each variable has a setter (`SetLogFormat`, `SetLogTime`, `SetLogLevel`, `SetLogService`) that is the program's default; the environment wins over it. An unknown value panics. Field values follow the contract's table ([fields.go](fields.go)): `time.Time` as the event time, `time.Duration` as milliseconds, `[]byte` as base64, structs through `encoding/json`, map keys sorted at every depth.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 
@@ -148,6 +174,31 @@ req := &SearchParams{Limit: Ptr(10)}
 [**priority_queue.go**](priority_queue.go): Dual-queue system with fairness guarantees and built-in skip-based backoff - PriorityQueue[K,V] maintains two permanent queues where priority items never demote. Features linear backoff via skip counts (items with skipCount > 0 are decremented and re-enqueued). Configurable fairness ratio (e.g., 2:1) ensures normal queue isn't starved. Dispatcher starts on first Process() call, multiple Process() calls share same dispatcher. Perfect for connection retry logic, tiered service handling, critical infrastructure monitoring.
 
 ## CLI Tools
+
+### logs
+
+Reads the event stream any of the three libraries writes, from files or stdin. At a terminal it renders it as the logger does at one; in a pipe it writes one grep line per event, so `logs app.log | rg WARN` works as grepping a file did:
+
+```
+2026-10-12T12:20:39.123Z WARN  [payments] retrying attempt=2
+```
+
+A line that is not an event (a Go panic, `net/http`'s own error log) is printed as it is, never dropped, whatever the filters.
+
+```bash
+# Install
+go install github.com/adriangalilea/go-utils/cmd/logs@latest
+
+# Usage
+logs app.log                     # render a file
+my-daemon 2>&1 | logs            # render a live stream
+logs -f app.log                  # follow from the last 10 lines, across rotation
+logs --level warn app.log        # warn and error only
+logs --scope api app.log         # [api] and [api auth], ...
+logs --trace 4bf92f3577b34da6a3ce929d0e0e4736 app.log
+```
+
+Named `logs` because `log` is a zsh builtin and `/usr/bin/log` on macOS.
 
 ### go-check
 

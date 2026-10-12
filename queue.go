@@ -12,7 +12,7 @@ Example usage:
 	// Create a queue for API requests
 	q := utils.NewQueue[string, APIRequest](100,
 		utils.WithMaxCompleted(500),
-		utils.WithQueueLogger(logger),
+		utils.WithQueueLogger[string, APIRequest](utils.Log.Scope("api")),
 	)
 
 	// Start workers that return results
@@ -131,16 +131,6 @@ type QueueMetrics interface {
 	RecordStateChange(from, to QueueState)
 }
 
-// Logger interface for queue operations. Variadic args joined with
-// spaces, no format strings - go-utils' own Log satisfies it:
-//
-//	q := NewQueue[string, Work](100, WithQueueLogger[string, Work](Log))
-type Logger interface {
-	Debug(args ...any)
-	Info(args ...any)
-	Error(args ...any)
-}
-
 // Queue provides a thread-safe work queue with built-in deduplication.
 // Each unique key can only be queued once until it completes processing.
 type Queue[K comparable, V any] struct {
@@ -153,7 +143,7 @@ type Queue[K comparable, V any] struct {
 	// Configuration
 	maxCompleted int
 	metrics      QueueMetrics
-	logger       Logger
+	logger       *Logger
 
 	// Runtime stats
 	totalEnqueued  atomic.Int64
@@ -186,7 +176,11 @@ func WithMetrics[K comparable, V any](m QueueMetrics) Option[K, V] {
 	}
 }
 
-func WithQueueLogger[K comparable, V any](l Logger) Option[K, V] {
+// WithQueueLogger traces the queue through l (debug for each item, error for
+// failures); without it the queue is silent:
+//
+//	q := NewQueue[string, Work](100, WithQueueLogger[string, Work](Log.Scope("queue")))
+func WithQueueLogger[K comparable, V any](l *Logger) Option[K, V] {
 	return func(q *Queue[K, V]) {
 		q.logger = l
 	}
@@ -214,7 +208,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		if q.logger != nil {
-			q.logger.Debug("Queue: item already", state, ":", key)
+			q.logger.Debug("item already queued", F{"key": key, "state": state.String()})
 		}
 		if q.metrics != nil {
 			q.metrics.RecordEnqueue(false)
@@ -237,7 +231,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 			}
 		}
 		if q.logger != nil {
-			q.logger.Debug("Queue: enqueued item:", key)
+			q.logger.Debug("enqueued", F{"key": key})
 		}
 		return Enqueued
 	default:
@@ -251,7 +245,7 @@ func (q *Queue[K, V]) TryEnqueue(key K, value V) EnqueueResult {
 			q.metrics.RecordEnqueue(false)
 		}
 		if q.logger != nil {
-			q.logger.Debug("Queue: queue full, cannot enqueue:", key)
+			q.logger.Debug("queue full, not enqueued", F{"key": key})
 		}
 		return QueueFull
 	}
@@ -276,7 +270,7 @@ func (q *Queue[K, V]) MustEnqueue(ctx context.Context, key K, value V) error {
 	if state, exists := q.state[key]; exists && (state == QueueStatePending || state == QueueStateInFlight) {
 		q.mu.Unlock()
 		if q.logger != nil {
-			q.logger.Debug("Queue: item already", state, ", skipping:", key)
+			q.logger.Debug("item already queued, skipping", F{"key": key, "state": state.String()})
 		}
 		return nil // Already queued or being processed, not an error
 	}
@@ -336,7 +330,7 @@ func (q *Queue[K, V]) Process(ctx context.Context, workers int, handler Handler[
 
 func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], results chan<- Result[K], workerID int) {
 	if q.logger != nil {
-		q.logger.Debug("Queue: worker", workerID, "started")
+		q.logger.Debug("worker started", F{"worker": workerID})
 	}
 
 	for {
@@ -346,7 +340,7 @@ func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], 
 
 		case <-ctx.Done():
 			if q.logger != nil {
-				q.logger.Debug("Queue: worker", workerID, "stopped (context done)")
+				q.logger.Debug("worker stopped, context done", F{"worker": workerID})
 			}
 			return
 		case <-q.drainCh:
@@ -357,7 +351,7 @@ func (q *Queue[K, V]) processWorker(ctx context.Context, handler Handler[K, V], 
 					q.processItem(ctx, item, handler, results)
 				default:
 					if q.logger != nil {
-						q.logger.Debug("Queue: worker", workerID, "stopped (drained)")
+						q.logger.Debug("worker stopped, drained", F{"worker": workerID})
 					}
 					return
 				}
@@ -412,9 +406,9 @@ func (q *Queue[K, V]) processItem(ctx context.Context, item queueItem[K, V], han
 
 	if q.logger != nil {
 		if err != nil {
-			q.logger.Error("Queue: item failed:", item.Key, "wait:", waitTime, "duration:", duration, "error:", err)
+			q.logger.Error("item failed", F{"key": item.Key, "wait": waitTime, "duration": duration, "err": err})
 		} else {
-			q.logger.Debug("Queue: item completed:", item.Key, "wait:", waitTime, "duration:", duration)
+			q.logger.Debug("item completed", F{"key": item.Key, "wait": waitTime, "duration": duration})
 		}
 	}
 
@@ -444,7 +438,7 @@ func (q *Queue[K, V]) ProcessWithRetry(ctx context.Context, workers int, handler
 			}
 
 			if q.logger != nil {
-				q.logger.Debug("Queue: retry attempt", attempt+1, "of", maxRetries+1, "for", key, "error:", err)
+				q.logger.Debug("retrying", F{"key": key, "attempt": attempt + 1, "of": maxRetries + 1, "err": err})
 			}
 		}
 		return err
@@ -480,7 +474,7 @@ func (q *Queue[K, V]) Drain() {
 	q.drainOnce.Do(func() {
 		close(q.drainCh)
 		if q.logger != nil {
-			q.logger.Info("Queue: draining with", len(q.work), "items remaining")
+			q.logger.Info("draining", F{"remaining": len(q.work)})
 		}
 	})
 }
@@ -516,7 +510,7 @@ func (q *Queue[K, V]) Clear() {
 	q.doneAt = make(map[K]time.Time)
 
 	if q.logger != nil {
-		q.logger.Info("Queue: cleared all state tracking")
+		q.logger.Info("cleared all state tracking")
 	}
 }
 

@@ -114,13 +114,7 @@ func init() {
 	monorepoRoot := findMonorepoRoot()
 	if monorepoRoot != "" {
 		// Add monorepo root .env with highest priority (after local .env)
-		monorepoEnv := filepath.Join(monorepoRoot, ".env")
-		KEV.sources = append(KEV.sources, monorepoEnv)
-
-		if KEV.Debug {
-			Log.Info("KEV", "Auto-discovered monorepo root:", monorepoRoot)
-			Log.Info("KEV", "Added monorepo .env to sources:", monorepoEnv)
-		}
+		KEV.sources = append(KEV.sources, filepath.Join(monorepoRoot, ".env"))
 	}
 
 	// Then check for project root
@@ -130,19 +124,6 @@ func init() {
 		// Only add if it's different from monorepo env
 		if monorepoRoot == "" || projectEnv != filepath.Join(monorepoRoot, ".env") {
 			KEV.sources = append(KEV.sources, projectEnv)
-
-			if KEV.Debug {
-				Log.Info("KEV", "Auto-discovered project root:", projectRoot)
-				Log.Info("KEV", "Added project .env to sources:", projectEnv)
-			}
-		}
-	}
-
-	if KEV.Debug {
-		if monorepoRoot == "" && projectRoot == "" {
-			Log.Info("KEV", "No project or monorepo root found, using standard sources:", KEV.sources)
-		} else {
-			Log.Info("KEV", "Default sources:", KEV.sources)
 		}
 	}
 }
@@ -178,30 +159,35 @@ func parseKey(key string) (namespace, k string) {
 //	KEV.Get("API_KEY")         - Check memory, then sources
 //	KEV.Get("PORT", "8080")    - With default value
 func (k *kevOps) Get(key string, defaultValue ...string) string {
+	return k.get(key, k.Debug, defaultValue...)
+}
+
+var kevLog = Log.Scope("kev")
+
+// get is Get with the debug trace chosen by the caller. The logger reads its
+// own configuration with debug off: a traced lookup writes a log line, and a
+// log line that needs a lookup to be written would recurse.
+func (k *kevOps) get(key string, debug bool, defaultValue ...string) string {
 	namespace, realKey := parseKey(key)
 
-	// Centralized debug flag - log level lookups themselves must never be
-	// debug-logged or every log line would recurse through here
-	debug := k.Debug && !strings.HasSuffix(key, "LOG_LEVEL")
-
 	if debug {
-		Log.Info("KEV", "Looking for", key)
+		kevLog.Info("lookup", F{"key": key})
 	}
 
 	if namespace != "" {
 		val := k.getFromNamespace(namespace, realKey)
 		if val != "" {
 			if debug {
-				Log.Info("KEV", "  ✓", namespace+":", "found", val)
+				kevLog.Info("found", F{"key": key, "source": namespace, "value": val})
 			}
 			return val
 		}
 		if debug {
-			Log.Info("KEV", "  ✗", namespace+":", "not found")
+			kevLog.Info("not found", F{"key": key, "source": namespace})
 		}
 		if len(defaultValue) > 0 {
 			if debug {
-				Log.Info("KEV", "  → using default:", defaultValue[0])
+				kevLog.Info("using default", F{"key": key, "value": defaultValue[0]})
 			}
 			return defaultValue[0]
 		}
@@ -215,19 +201,19 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 
 	if exists {
 		if debug {
-			Log.Info("KEV", "  ✓ memory:", entry.value, "(from", entry.source+")")
+			kevLog.Info("found", F{"key": key, "source": "memory", "value": entry.value, "from": entry.source})
 		}
 		return entry.value
 	}
 
 	if debug {
-		Log.Info("KEV", "  ✗ memory: not found")
+		kevLog.Info("not found", F{"key": key, "source": "memory"})
 	}
 
 	for _, source := range sources {
 		if val := k.getFromNamespace(source, realKey); val != "" {
 			if debug {
-				Log.Info("KEV", "  ✓", source+":", "found", val, "(caching)")
+				kevLog.Info("found, caching", F{"key": key, "source": source, "value": val})
 			}
 			// Store absolute path for file sources
 			absoluteSource := source
@@ -242,13 +228,13 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 			return val
 		}
 		if debug {
-			Log.Info("KEV", "  ✗", source+":", "not found")
+			kevLog.Info("not found", F{"key": key, "source": source})
 		}
 	}
 
 	if len(defaultValue) > 0 {
 		if debug {
-			Log.Info("KEV", "  → using default:", defaultValue[0], "(caching)")
+			kevLog.Info("using default, caching", F{"key": key, "value": defaultValue[0]})
 		}
 		k.mu.Lock()
 		k.memory[realKey] = memEntry{value: defaultValue[0], source: "default"}
@@ -257,7 +243,7 @@ func (k *kevOps) Get(key string, defaultValue ...string) string {
 	}
 
 	if debug {
-		Log.Info("KEV", "  → not found, returning empty")
+		kevLog.Info("not found anywhere, returning empty", F{"key": key})
 	}
 	return ""
 }
