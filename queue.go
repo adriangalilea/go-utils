@@ -24,7 +24,7 @@ Example usage:
 	go func() {
 		for result := range results {
 			if result.Error != nil {
-				log.Printf("Failed %s: %v", result.Key, result.Error)
+				utils.Log.Error("api call failed", utils.F{"key": result.Key, "err": result.Error})
 			}
 		}
 	}()
