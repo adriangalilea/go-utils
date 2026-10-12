@@ -13,12 +13,14 @@ import (
 
 // Human renders events for a person at a terminal: the verb's symbol, the
 // scope dim in brackets, the message, fields dim as key=value, an error's
-// stack dim under its line, and a span as `○ name` … `✓ name 254ms` with what
+// stack dim under its line (once: not again on a span the error is passed up
+// to), and a span as `○ name` … `✓ name 254ms` with what
 // it holds indented one step deeper. Indentation comes from the stream itself
 // (parent_id, span_id), so the logger and the viewer agree, and an event whose
 // span never showed sits at the depth of the nearest one that did.
 type Human struct {
 	depth   map[string]int
+	failed  map[string]map[string]bool // open span id -> stacks printed by failures inside it
 	symbols [len(verbs)]lipgloss.Style
 	dim     lipgloss.Style
 }
@@ -30,7 +32,8 @@ func NewHuman(w io.Writer) *Human {
 	bold := func(color string) lipgloss.Style { return r.NewStyle().Bold(true).Foreground(lipgloss.Color(color)) }
 	dim := r.NewStyle().Foreground(lipgloss.Color("8"))
 	return &Human{
-		depth: make(map[string]int),
+		depth:  make(map[string]int),
+		failed: make(map[string]map[string]bool),
 		symbols: [len(verbs)]lipgloss.Style{
 			VerbError:   bold("1"),
 			VerbFail:    bold("1"),
@@ -77,10 +80,11 @@ func (h *Human) Render(e *Event, clock bool) string {
 	for _, f := range e.Fields {
 		text, stack := fieldText(f.Value)
 		b.WriteString(" " + h.dim.Render(f.Key+"="+text))
-		if stack != "" {
+		if stack != "" && !h.failedWith(e, stack) {
 			stacks = append(stacks, stack)
 		}
 	}
+	h.closeFailures(e)
 	b.WriteByte('\n')
 	for _, stack := range stacks {
 		for _, line := range strings.Split(strings.TrimRight(stack, "\n"), "\n") {
@@ -88,6 +92,53 @@ func (h *Human) Render(e *Event, clock bool) string {
 		}
 	}
 	return b.String()
+}
+
+// failedWith reports whether a failure inside e's span already printed stack,
+// so it prints once: a span that fails with an error a span inside it failed
+// with (the same error, passed up) shows its message only. Only a failure
+// (verb fail: a span's end, or a hidden span's fail line) counts and is
+// remembered. A stack is the error's identity here: the viewer meets the
+// error as JSON, not as the object.
+func (h *Human) failedWith(e *Event, stack string) bool {
+	if e.Verb != VerbFail {
+		return false
+	}
+	if h.failed[e.SpanID][stack] {
+		return true
+	}
+	// An end is remembered by its parent, a line by its own span; only spans
+	// open here, so a set is dropped when its span ends.
+	holder := e.SpanID
+	if e.Phase == PhaseEnd {
+		holder = e.ParentID
+	}
+	if _, open := h.depth[holder]; open {
+		if h.failed[holder] == nil {
+			h.failed[holder] = make(map[string]bool)
+		}
+		h.failed[holder][stack] = true
+	}
+	return false
+}
+
+// closeFailures hands what failed inside an ending span to its parent: an
+// error passed up any number of spans prints its stack once.
+func (h *Human) closeFailures(e *Event) {
+	if e.Phase != PhaseEnd {
+		return
+	}
+	inside := h.failed[e.SpanID]
+	delete(h.failed, e.SpanID)
+	if _, open := h.depth[e.ParentID]; !open || len(inside) == 0 {
+		return
+	}
+	if h.failed[e.ParentID] == nil {
+		h.failed[e.ParentID] = make(map[string]bool)
+	}
+	for stack := range inside {
+		h.failed[e.ParentID][stack] = true
+	}
 }
 
 // place returns the event's depth and keeps the open spans' depths: a span
