@@ -307,6 +307,33 @@ func TestJoin(t *testing.T) {
 	}
 }
 
+// The remote span of a join counts as shown: a hidden root span under it
+// hands its lines, its children and its traceparent to the remote.
+func TestHiddenSpanUnderJoin(t *testing.T) {
+	var hidden *Span
+	es := events(t, capture(t, "json", func() {
+		KEV.Set("DB_LOG_LEVEL", "warn")
+		KEV.Set("DB_FAST_LOG_LEVEL", "info")
+		hidden = Log.Join(remote).Scope("db").Span("query")
+		hidden.Warn("slow query")
+		hidden.Scope("fast").Span("fetch").End(nil)
+		hidden.End(nil)
+	}))
+	if len(es) != 3 {
+		t.Fatalf("want the line and the child's two events, got %d", len(es))
+	}
+	line, fetch := es[0], es[1]
+	if line.TraceID != "0af7651916cd43dd8448eb211c80319c" || line.SpanID != "b7ad6b7169203331" {
+		t.Fatalf("a line in the hidden span belongs to the remote: %+v", line)
+	}
+	if fetch.TraceID != line.TraceID || fetch.ParentID != "b7ad6b7169203331" {
+		t.Fatalf("a child of the hidden span names the remote as parent: %+v", fetch)
+	}
+	if hidden.Traceparent() != remote {
+		t.Fatalf("the hidden span's traceparent names the remote: %s", hidden.Traceparent())
+	}
+}
+
 // TRACEPARENT is read at process start, so the check runs in a child process.
 func TestTraceparentEnv(t *testing.T) {
 	if os.Getenv("GO_UTILS_TRACEPARENT_CHILD") == "1" {
