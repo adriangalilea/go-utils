@@ -159,7 +159,22 @@ func charge(amount int) (err error) {
 
 A trace crosses processes explicitly: hand on `s.Traceparent()` in an HTTP `traceparent` header or a `TRACEPARENT` variable; `Log.Join(r.Header.Get("traceparent"))` continues it, and a process started with `TRACEPARENT` set continues it for its root spans. A span hidden by its level writes neither start nor end; what it holds belongs to the nearest span that is shown. A failure is never lost to that: a hidden span that fails writes one `fail` line in the nearest shown span, its fields with `err` and `dur_ms`.
 
-Everything goes to stderr, stdout stays data. `LOG_FORMAT=json` writes one JSON event per line in the contract's key order, `human` writes symbols, colour, dim `key=value` fields, error stacks and indented spans; the default is human when stderr is a terminal and json otherwise. `LOG_TIME=1` opens human lines with a dim local `HH:MM:SS`. `LOG_SERVICE` names the program in every event (default: the executable's name). Each variable has a setter (`SetLogFormat`, `SetLogTime`, `SetLogLevel`, `SetLogService`) that is the program's default; the environment wins over it. An unknown value panics. Field values follow the contract's table ([fields.go](fields.go)): `time.Time` as the event time, `time.Duration` as milliseconds, `[]byte` as base64, structs through `encoding/json`, map keys sorted at every depth.
+Everything goes to stderr, stdout stays data. `LOG_FORMAT=json` writes one JSON event per line in the contract's key order, `human` writes symbols, colour, dim `key=value` fields, error stacks and indented spans; the default is human when stderr is a terminal and json otherwise. `LOG_TIME=1` opens human lines with a dim local `HH:MM:SS`. `LOG_SERVICE` names the program in every event (default: the executable's name). Each variable has a setter (`SetLogFormat`, `SetLogTime`, `SetLogLevel`, `SetLogService`, `SetLogShip`, `SetLogShipToken`) that is the program's default; the environment wins over it. An unknown value panics. Field values follow the contract's table ([fields.go](fields.go)): `time.Time` as the event time, `time.Duration` as milliseconds, `[]byte` as base64, structs through `encoding/json`, map keys sorted at every depth.
+
+[**ship.go**](ship.go): with `LOG_SHIP` set, every event that passes its threshold is also POSTed to that URL as its json line, byte for byte, whatever stderr renders, so a daemon ships its stream with no code:
+
+```sh
+LOG_SHIP=https://events.untitled.garden/ingest LOG_SHIP_TOKEN=… my-daemon
+```
+
+```go
+func main() {
+    defer FlushLog()   // Go has no exit hook: send what waits before main returns
+    ...
+}
+```
+
+A batch is lines joined by `\n`, `Content-Type: text/plain;charset=utf-8`, at most 64 KB and 50 events, with `LOG_SHIP_TOKEN` as `Authorization: Bearer`. It leaves 2s after its first event, at 50 events, and when a span opened outside any span of this process ends (a root span, or a request joined from its caller: its whole trace leaves together). `FlushLog()` sends what waits and returns once no batch is in flight; call it before `main` returns or `os.Exit`. Shipping never blocks a write and never panics: a refused or lost batch is one `WarnOnce` under scope `ship` (no retry), an event over 64 KB stays on stderr and warns once. A malformed `LOG_SHIP` panics. The wire and the collector's answers are the contract's, in [utils](https://github.com/adriangalilea/utils#shipping).
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 

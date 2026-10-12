@@ -19,7 +19,8 @@ import (
 // The variables the logger reads, blanked in KEV memory so the shell running
 // the tests cannot change what they see (KEV reads memory before the OS).
 var logVars = []string{"LOG_FORMAT", "LOG_TIME", "LOG_SERVICE", "LOG_LEVEL",
-	"API_LOG_LEVEL", "API_AUTH_LOG_LEVEL", "DB_LOG_LEVEL", "DB_FAST_LOG_LEVEL"}
+	"API_LOG_LEVEL", "API_AUTH_LOG_LEVEL", "DB_LOG_LEVEL", "DB_FAST_LOG_LEVEL",
+	"QUIET_LOG_LEVEL", "LOG_SHIP", "LOG_SHIP_TOKEN"}
 
 // capture runs fn with the logger writing to a buffer in format, the
 // environment blank and the settings at their defaults, and returns what it
@@ -35,6 +36,7 @@ func capture(t *testing.T, format string, fn func()) string {
 	out.Unlock()
 	settings.Lock()
 	settings.levelSet, settings.format, settings.clock, settings.service = false, format, "", "svc"
+	settings.ship, settings.shipToken = "", ""
 	settings.Unlock()
 	t.Cleanup(func() {
 		out.Lock()
@@ -42,6 +44,7 @@ func capture(t *testing.T, format string, fn func()) string {
 		out.Unlock()
 		settings.Lock()
 		settings.levelSet, settings.format, settings.clock, settings.service = false, "", "", ""
+		settings.ship, settings.shipToken = "", ""
 		settings.Unlock()
 		for _, name := range logVars {
 			KEV.Unset(name)

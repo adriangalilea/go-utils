@@ -61,10 +61,13 @@ import (
 // colour, dim key=value fields and indented spans. The default is human when
 // stderr is a terminal, json otherwise. LOG_TIME=1 opens human lines with a
 // dim local HH:MM:SS. LOG_SERVICE names the program in every event (default:
-// the executable's name). Each variable has a setter for code (SetLogFormat,
-// SetLogTime, SetLogLevel, SetLogService), and the environment, read live,
-// wins over it. Values match in any case; an unknown one panics. `logs`
-// (cmd/logs) reads the JSON back as human or as grep lines.
+// the executable's name). LOG_SHIP=<url> also POSTs every event's json line
+// there in batches, LOG_SHIP_TOKEN its bearer (ship.go); a program that ships
+// calls FlushLog before it ends. Each variable has a setter for code
+// (SetLogFormat, SetLogTime, SetLogLevel, SetLogService, SetLogShip,
+// SetLogShipToken), and the environment, read live, wins over it. Values
+// match in any case; an unknown one panics. `logs` (cmd/logs) reads the JSON
+// back as human or as grep lines.
 var Log = &Logger{}
 
 // F is the fields of an event. Keys are written sorted; values follow the
@@ -245,7 +248,7 @@ func parseLevel(name, value string) stream.Level {
 func (l *Logger) Span(name string, fields ...F) *Span {
 	f := single(fields)
 	trace, parent := l.parentage()
-	s := &Span{name: name, trace: trace, id: newID(8), parent: parent, anchor: parent, start: time.Now(), fields: F{}}
+	s := &Span{name: name, trace: trace, id: newID(8), parent: parent, anchor: parent, top: l.span == nil, start: time.Now(), fields: F{}}
 	maps.Copy(s.fields, f)
 	s.Logger = &Logger{scope: l.scope, levelVars: l.levelVars, span: s}
 	s.shown = s.enabled(stream.VerbWait.Level())
@@ -284,6 +287,7 @@ type Span struct {
 	parent string // the shown span this one hangs from; "" for a root
 	shown  bool   // its start was written, so its end will be
 	anchor string // the shown span what this one holds belongs to: id when shown, else parent
+	top    bool   // opened outside any span of this process: its end ships what waits
 	start  time.Time
 
 	mu     sync.Mutex
@@ -324,6 +328,11 @@ func (s *Span) End(err *error) {
 	s.ended = true
 	s.mu.Unlock()
 	Assert(!ended, "span ended twice:", s.name)
+	if s.top {
+		// A root, or a request joined from its caller, ends its trace here:
+		// what it wrote ships together.
+		defer send()
+	}
 	dur := time.Since(s.start)
 	failed := err != nil && *err != nil
 	if failed {
@@ -417,11 +426,13 @@ func envTraceparent() *remoteSpan {
 // environment wins: the operator's variable overrides what code chose.
 var settings struct {
 	sync.Mutex
-	level    stream.Level
-	levelSet bool
-	format   string
-	clock    string
-	service  string
+	level     stream.Level
+	levelSet  bool
+	format    string
+	clock     string
+	service   string
+	ship      string
+	shipToken string
 }
 
 // SetLogLevel is the program's default threshold: silent, error, warn, info,
@@ -516,19 +527,40 @@ var out = struct {
 	human *stream.Human
 }{w: os.Stderr}
 
-// emit writes the event. A failed write to stderr is dropped: there is
-// nowhere left to report it.
+// emit writes the event, and ships its json line when LOG_SHIP is set. A
+// failed write to stderr is dropped: there is nowhere left to report it.
 func emit(e *stream.Event) {
 	human, clock := output()
+	target := shipTarget()
+	if size := write(e, human, clock, target); size > 0 {
+		// Outside out's lock: the warning is an event, written like any other.
+		shipLog.WarnOnce("event too large to ship", F{"bytes": size, "limit": shipMaxBytes})
+	}
+}
+
+// write puts the event on stderr and, with a target, its json line in the
+// waiting batch, both under out's lock so a batch keeps stderr's order. It
+// returns the line's size when the line is too large to ship, else 0.
+func write(e *stream.Event, human, clock bool, target string) int {
 	out.Lock()
 	defer out.Unlock()
-	if !human {
+	if !human || target != "" {
 		out.buf = append(e.AppendJSON(out.buf[:0]), '\n')
+	}
+	if human {
+		if out.human == nil {
+			out.human = stream.NewHuman(out.w)
+		}
+		_, _ = io.WriteString(out.w, out.human.Render(e, clock))
+	} else {
 		_, _ = out.w.Write(out.buf)
-		return
 	}
-	if out.human == nil {
-		out.human = stream.NewHuman(out.w)
+	if target == "" {
+		return 0
 	}
-	_, _ = io.WriteString(out.w, out.human.Render(e, clock))
+	line := out.buf[:len(out.buf)-1]
+	if ship(target, line) {
+		return 0
+	}
+	return len(line)
 }
