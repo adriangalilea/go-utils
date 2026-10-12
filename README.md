@@ -157,7 +157,7 @@ func charge(amount int) (err error) {
 }
 ```
 
-A trace crosses processes explicitly: hand on `s.Traceparent()` in an HTTP `traceparent` header or a `TRACEPARENT` variable; `Log.Join(r.Header.Get("traceparent"))` continues it, and a process started with `TRACEPARENT` set continues it for its root spans. A span hidden by its level writes neither start nor end; what it holds belongs to the nearest span that is shown.
+A trace crosses processes explicitly: hand on `s.Traceparent()` in an HTTP `traceparent` header or a `TRACEPARENT` variable; `Log.Join(r.Header.Get("traceparent"))` continues it, and a process started with `TRACEPARENT` set continues it for its root spans. A span hidden by its level writes neither start nor end; what it holds belongs to the nearest span that is shown. A failure is never lost to that: a hidden span that fails writes one `fail` line in the nearest shown span, its fields with `err` and `dur_ms`.
 
 Everything goes to stderr, stdout stays data. `LOG_FORMAT=json` writes one JSON event per line in the contract's key order, `human` writes symbols, colour, dim `key=value` fields, error stacks and indented spans; the default is human when stderr is a terminal and json otherwise. `LOG_TIME=1` opens human lines with a dim local `HH:MM:SS`. `LOG_SERVICE` names the program in every event (default: the executable's name). Each variable has a setter (`SetLogFormat`, `SetLogTime`, `SetLogLevel`, `SetLogService`) that is the program's default; the environment wins over it. An unknown value panics. Field values follow the contract's table ([fields.go](fields.go)): `time.Time` as the event time, `time.Duration` as milliseconds, `[]byte` as base64, structs through `encoding/json`, map keys sorted at every depth.
 

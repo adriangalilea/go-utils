@@ -240,8 +240,8 @@ func parseLevel(name, value string) stream.Level {
 // root span (of the joined remote span, else of TRACEPARENT's, else a new
 // trace). Whether it is shown is decided now, once, by its start's level (info)
 // against the threshold: a shown span writes its start now and its end at
-// End; a hidden one writes neither, and what it holds belongs to the nearest
-// span that was shown.
+// End; a hidden one writes neither (only a fail line, if it fails), and what
+// it holds belongs to the nearest span that was shown.
 func (l *Logger) Span(name string, fields ...F) *Span {
 	f := single(fields)
 	trace, parent := l.parentage()
@@ -314,8 +314,10 @@ func (s *Span) Traceparent() string {
 
 // End writes the span's end when its start was written. err nil or pointing
 // to nil: ok, verb success. Pointing to an error: verb fail, level error, the
-// error in fields.err. Call it once, deferred with the function's named
-// error: defer s.End(&err).
+// error in fields.err. A hidden span that fails is not lost: it writes one
+// fail line in the nearest shown span, its fields with err and dur_ms, and no
+// phase, so nothing waits to be paired with it. Call it once, deferred with
+// the function's named error: defer s.End(&err).
 func (s *Span) End(err *error) {
 	s.mu.Lock()
 	ended := s.ended
@@ -323,13 +325,20 @@ func (s *Span) End(err *error) {
 	s.mu.Unlock()
 	Assert(!ended, "span ended twice:", s.name)
 	dur := time.Since(s.start)
+	failed := err != nil && *err != nil
+	if failed {
+		s.fields["err"] = *err
+	}
 	if !s.shown {
+		if failed && s.enabled(stream.VerbFail.Level()) {
+			s.fields["dur_ms"] = dur
+			s.write(stream.VerbFail, s.name, s.fields)
+		}
 		return
 	}
 	verb := stream.VerbSuccess
-	if err != nil && *err != nil {
+	if failed {
 		verb = stream.VerbFail
-		s.fields["err"] = *err
 	}
 	e := s.own(verb, stream.PhaseEnd)
 	e.DurMs = math.Round(float64(dur.Nanoseconds())/1e3) / 1e3

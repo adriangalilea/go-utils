@@ -242,7 +242,7 @@ func TestHiddenSpanReparenting(t *testing.T) {
 		KEV.Set("DB_LOG_LEVEL", "warn")
 		KEV.Set("DB_FAST_LOG_LEVEL", "info")
 		outer = Log.Span("request")
-		hidden = outer.Scope("db").Span("query")
+		hidden = outer.Scope("db").Span("query", F{"table": "users"})
 		hidden.Warn("slow query")
 		fetch := hidden.Scope("fast").Span("fetch")
 		fetch.End(nil)
@@ -257,10 +257,17 @@ func TestHiddenSpanReparenting(t *testing.T) {
 	for i, e := range es {
 		verbs[i] = e.Verb.String() + " " + e.Msg
 	}
-	if got := strings.Join(verbs, ", "); got != "wait request, warn slow query, wait fetch, success fetch, success request, warn alone" {
-		t.Fatalf("a hidden span writes neither start nor end, failed or not: %s", got)
+	if got := strings.Join(verbs, ", "); got != "wait request, warn slow query, wait fetch, success fetch, fail query, success request, warn alone" {
+		t.Fatalf("a hidden span writes neither start nor end, only a fail line when it fails: %s", got)
 	}
-	request, slow, fetchStart, alone := es[0], es[1], es[2], es[5]
+	request, slow, fetchStart, failed, alone := es[0], es[1], es[2], es[4], es[6]
+	if failed.Phase != stream.PhaseNone || failed.Verb.Level() != stream.LevelError ||
+		failed.SpanID != request.SpanID || failed.TraceID != request.TraceID || failed.DurMs != 0 {
+		t.Fatalf("a hidden span's failure is an error line of the nearest shown span, no phase: %+v", failed)
+	}
+	if got := regexp.MustCompile(`"dur_ms":\d+(\.\d+)?`).ReplaceAllString(fieldsJSON(failed), `"dur_ms":D`); got != `{"dur_ms":D,"err":{"type":"*errors.errorString","message":"timeout"},"table":"users"}` {
+		t.Fatalf("the fail line carries the span's fields with err and dur_ms: %s", got)
+	}
 	if slow.SpanID != request.SpanID {
 		t.Fatalf("a line in a hidden span belongs to the nearest shown one: %+v", slow)
 	}
@@ -275,6 +282,25 @@ func TestHiddenSpanReparenting(t *testing.T) {
 	}
 	if want := "00-" + lonely.trace + "-" + lonely.id + "-01"; lonely.Traceparent() != want {
 		t.Fatalf("no shown ancestor: own id %s, want %s", lonely.Traceparent(), want)
+	}
+}
+
+// A hidden root span's failure is a line with no ids, as any line with no
+// shown span; a scope set to silent keeps even that quiet.
+func TestHiddenRootSpanFailure(t *testing.T) {
+	es := events(t, capture(t, "json", func() {
+		KEV.Set("DB_LOG_LEVEL", "error")
+		failure := errors.New("timeout")
+		Log.Scope("db").Span("query").End(&failure)
+		KEV.Set("DB_LOG_LEVEL", "silent")
+		Log.Scope("db").Span("muted").End(&failure)
+	}))
+	if len(es) != 1 {
+		t.Fatalf("one fail line, nothing from the silent scope: %+v", es)
+	}
+	e := es[0]
+	if e.Verb != stream.VerbFail || e.Msg != "query" || e.Phase != stream.PhaseNone || e.SpanID != "" || e.TraceID != "" || e.ParentID != "" {
+		t.Fatalf("a hidden root span's failure: a fail line with no ids: %+v", e)
 	}
 }
 
