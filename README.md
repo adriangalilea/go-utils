@@ -164,7 +164,7 @@ Everything goes to stderr, stdout stays data. `LOG_FORMAT=json` writes one JSON 
 [**ship.go**](ship.go): with `LOG_SHIP` set, every event that passes its threshold is also POSTed to that URL as its json line, byte for byte, whatever stderr renders, so a daemon ships its stream with no code:
 
 ```sh
-LOG_SHIP=https://events.untitled.garden/ingest LOG_SHIP_TOKEN=… my-daemon
+LOG_SHIP=https://logs.example.com/ingest LOG_SHIP_TOKEN=… my-daemon
 ```
 
 ```go
