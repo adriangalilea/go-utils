@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -83,6 +84,28 @@ func TestFilters(t *testing.T) {
 			t.Errorf("%+v must pass both lines that are not events through: %q", c.keep, passed)
 		}
 	}
+}
+
+// A live stream shows each line when it arrives, not when the stream ends.
+func TestLiveStdin(t *testing.T) {
+	in, feed := io.Pipe()
+	shown, out := io.Pipe()
+	v := &viewer{w: bufio.NewWriter(out), keep: all}
+	go v.read(in)
+	lines := bufio.NewReader(shown)
+	for _, msg := range []string{"first", "second"} {
+		go func() {
+			_, _ = io.WriteString(feed, `{"time":"2026-10-12T12:20:39.123Z","level":"info","verb":"info","msg":"`+msg+`","service":"svc"}`+"\n")
+		}()
+		got, err := lines.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "2026-10-12T12:20:39.123Z INFO  " + msg + "\n"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+	_ = feed.Close()
 }
 
 func TestTailOffset(t *testing.T) {

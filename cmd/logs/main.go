@@ -130,13 +130,19 @@ func (v *viewer) flush() {
 	}
 }
 
-// read renders r to its end, a last line without a newline included.
+// read renders r to its end, a last line without a newline included. What is
+// rendered is flushed whenever the input has nothing more waiting, so a live
+// stream (a pipe from a running program) shows each line as it arrives, and a
+// file is still written in large blocks.
 func (v *viewer) read(r io.Reader) {
 	br := bufio.NewReader(r)
 	for {
 		raw, err := br.ReadBytes('\n')
 		if len(raw) > 0 {
 			v.line(trimNewline(raw))
+		}
+		if br.Buffered() == 0 {
+			v.flush()
 		}
 		if err == io.EOF {
 			return
