@@ -519,13 +519,32 @@ var stderrTTY = sync.OnceValue(func() bool {
 
 // out is where events go. One write per event under the lock, so lines from
 // concurrent goroutines never interleave; the human renderer keeps the depth
-// of open spans across events.
+// of open spans across events. term is the terminal the renderer colours
+// for: w can be a live region's writer (LogThrough), which is no terminal
+// itself but prints onto one.
 var out = struct {
 	sync.Mutex
 	w     io.Writer
+	term  io.Writer
 	buf   []byte
 	human *stream.Human
-}{w: os.Stderr}
+}{w: os.Stderr, term: os.Stderr}
+
+// LogThrough sends every event to w until restore is called. A live terminal
+// region (cli.Live) passes a writer that prints each event above itself, so
+// log lines and the region never tear each other. One write per event, under
+// the logger's lock: w must not log.
+func LogThrough(w io.Writer) (restore func()) {
+	out.Lock()
+	defer out.Unlock()
+	Assert(out.w == out.term, "LogThrough: events already go through another writer")
+	out.w = w
+	return func() {
+		out.Lock()
+		defer out.Unlock()
+		out.w = out.term
+	}
+}
 
 // emit writes the event, and ships its json line when LOG_SHIP is set. A
 // failed write to stderr is dropped: there is nowhere left to report it.
@@ -549,7 +568,7 @@ func write(e *stream.Event, human, clock bool, target string) int {
 	}
 	if human {
 		if out.human == nil {
-			out.human = stream.NewHuman(out.w)
+			out.human = stream.NewHuman(out.term)
 		}
 		_, _ = io.WriteString(out.w, out.human.Render(e, clock))
 	} else {

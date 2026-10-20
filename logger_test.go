@@ -32,7 +32,7 @@ func capture(t *testing.T, format string, fn func()) string {
 	}
 	var buf bytes.Buffer
 	out.Lock()
-	out.w, out.human = &buf, nil
+	out.w, out.term, out.human = &buf, &buf, nil
 	out.Unlock()
 	settings.Lock()
 	settings.levelSet, settings.format, settings.clock, settings.service = false, format, "", "svc"
@@ -40,7 +40,7 @@ func capture(t *testing.T, format string, fn func()) string {
 	settings.Unlock()
 	t.Cleanup(func() {
 		out.Lock()
-		out.w, out.human = os.Stderr, nil
+		out.w, out.term, out.human = os.Stderr, os.Stderr, nil
 		out.Unlock()
 		settings.Lock()
 		settings.levelSet, settings.format, settings.clock, settings.service = false, "", "", ""
