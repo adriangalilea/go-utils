@@ -94,7 +94,7 @@ func Spinner(label string, fn func(set func(string)) error) error {
 	defer func() {
 		if p := recover(); p != nil {
 			if r != nil {
-				r.Clear() // the cursor comes back before the crash prints
+				r.Clear() // stdout back and the screen clean before the crash prints
 			}
 			panic(p)
 		}

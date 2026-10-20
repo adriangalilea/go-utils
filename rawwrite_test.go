@@ -20,6 +20,8 @@ var rawWriteAllowed = map[string]string{
 	"logger.go:stderrTTY":           "the sink chooses human or json by whether stderr is a terminal",
 	"kev.go:Dump":                   "data on stdout: Dump prints the environment as namespace:KEY=value, the output it is called for",
 	"cli/live.go:Live":              "a live region is terminal UI on stderr, not an event; log events print above it through LogThrough",
+	"cli/live.go:holdStdout":        "a region on a terminal holds os.Stdout and prints each line above itself, so fmt cannot tear it",
+	"cli/live.go:releaseStdout":     "gives os.Stdout back when the region ends",
 	"internal/ansi/ansi.go:Enabled": "the colour decision reads whether stdout and stderr are terminals; nothing is written",
 }
 

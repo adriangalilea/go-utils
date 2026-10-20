@@ -1,13 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"os"
-	"os/signal"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	. "github.com/adriangalilea/go-utils" //nolint:staticcheck
@@ -15,8 +14,6 @@ import (
 )
 
 const (
-	hideCursor = "\x1b[?25l"
-	showCursor = "\x1b[?25h"
 	// Synchronized update: modern terminals (Ghostty, iTerm2, kitty, WezTerm,
 	// recent Terminal.app) paint the wrapped write at once, so an erase and
 	// its repaint never flicker. Others ignore the unknown mode.
@@ -34,18 +31,13 @@ func wipe(n int) string {
 }
 
 // LiveOpts shapes a live region. The zero value repaints stderr 12.5 times a
-// second, prints nothing between frames off a terminal, and restores the
-// cursor before dying on Ctrl-C.
+// second and prints nothing between frames off a terminal.
 type LiveOpts struct {
 	Out *os.File // default os.Stderr: stdout stays data for pipes
 	FPS float64  // repaints per second on a terminal (0 = 12.5, the spinner's cadence)
 	// Heartbeat, off a terminal, prints the current frame every period so a
 	// long run in CI or a log file is not silent. 0 = only the final frame.
 	Heartbeat time.Duration
-	// AppHandlesSignals leaves SIGINT and SIGTERM alone: the program has its
-	// own shutdown and calls Done or Clear on the way out. Otherwise the
-	// region restores the cursor and the signal kills the program as usual.
-	AppHandlesSignals bool
 }
 
 // Region is a block of lines pinned at the bottom of the terminal, repainted
@@ -53,15 +45,22 @@ type LiveOpts struct {
 // screen: render reads your state and returns the frame, a plain string that
 // Table, KV, Bar and Spin compose into.
 //
-// While it is up, log events (Log.*) print above it instead of through it,
-// and so does Print: write every other line with Print, because fmt.Println
-// to the same terminal would land inside the region and tear it.
+// Nothing else can tear it while it is up: log events (Log.*) print above it,
+// so does Print, and so does anything written to stdout (fmt.Println
+// included) when stdout is the same terminal — the region holds os.Stdout for
+// its lifetime and prints each line above itself. Stdout redirected to a file
+// or a pipe is left alone: that is data.
+//
+// The region never touches signals and never hides the cursor, so Ctrl-C is
+// whatever the program makes of it and leaves the terminal as it was, the
+// last frame on screen. A program that handles the signal ends the region
+// with Done or Clear on its way out.
 //
 // Off a terminal nothing repaints: Print prints, Done prints the final frame
 // once, Heartbeat prints snapshots. The same calling code serves both.
 //
 // One region at a time: two cannot share the bottom of one screen. render
-// runs under the region's lock and must not log.
+// runs under the region's lock and must not log or print.
 type Region struct {
 	mu         sync.Mutex
 	render     func() string
@@ -71,7 +70,11 @@ type Region struct {
 	stopped    bool
 	quit       chan struct{}
 	restoreLog func()
-	sigs       chan os.Signal
+	// While stdout is held: the terminal it was, the pipe it is, and the
+	// reader that prints each line above the region.
+	stdout  *os.File
+	pipe    *os.File
+	drained chan struct{}
 }
 
 var active atomic.Pointer[Region]
@@ -94,15 +97,12 @@ func Live(render func() string, o LiveOpts) *Region {
 	}
 	Assert(active.CompareAndSwap(nil, r), "one live region at a time — compose into a single render")
 	r.restoreLog = LogThrough(aboveWriter{r})
-	if !o.AppHandlesSignals {
-		r.guardSignals()
+	if term.IsTerminal(os.Stdout.Fd()) {
+		r.holdStdout()
 	}
-	r.mu.Lock()
-	r.write(hideCursor)
-	r.paint()
-	r.mu.Unlock()
+	r.Refresh()
 	fps := cmp.Or(o.FPS, 12.5)
-	r.tick(time.Duration(float64(time.Second)/fps), func() { r.Refresh() })
+	r.tick(time.Duration(float64(time.Second)/fps), r.Refresh)
 	return r
 }
 
@@ -125,7 +125,7 @@ func (r *Region) Update(render func() string) {
 
 // Print writes line above the region, which repaints under it.
 func (r *Region) Print(line string) {
-	r.above(line + "\n")
+	r.above(r.out, line+"\n")
 }
 
 // Done stops the region and leaves its current frame in the scrollback.
@@ -134,6 +134,7 @@ func (r *Region) Done() { r.DoneWith("") }
 // DoneWith stops the region and leaves frame in the scrollback in its place
 // ("" = the current frame).
 func (r *Region) DoneWith(frame string) {
+	r.releaseStdout()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if frame == "" {
@@ -144,16 +145,17 @@ func (r *Region) DoneWith(frame string) {
 		r.write(frame + "\n")
 		return
 	}
-	r.write(wipe(r.painted) + frame + "\n" + showCursor)
+	r.write(wipe(r.painted) + frame + "\n")
 }
 
 // Clear stops the region and removes it from the screen.
 func (r *Region) Clear() {
+	r.releaseStdout()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stop()
 	if r.tty {
-		r.write(wipe(r.painted) + showCursor)
+		r.write(wipe(r.painted))
 	}
 }
 
@@ -176,17 +178,19 @@ func (r *Region) paint() {
 	r.painted = len(lines)
 }
 
-// above erases the region, writes text, and repaints underneath it, all in one
-// synchronized update.
-func (r *Region) above(text string) {
+// above erases the region, writes text to dst, and repaints underneath it, in
+// one synchronized update. dst is the region's stream or the held stdout:
+// both are the same terminal, written in order.
+func (r *Region) above(dst *os.File, text string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.tty || r.stopped {
-		r.write(text)
+		_, _ = dst.WriteString(text)
 		return
 	}
-	r.write(syncOn + wipe(r.painted) + text)
+	r.write(syncOn + wipe(r.painted))
 	r.painted = 0
+	_, _ = dst.WriteString(text)
 	r.paint()
 }
 
@@ -194,12 +198,55 @@ func (r *Region) above(text string) {
 type aboveWriter struct{ r *Region }
 
 func (w aboveWriter) Write(p []byte) (int, error) {
-	w.r.above(string(p))
+	w.r.above(w.r.out, string(p))
 	return len(p), nil
 }
 
-// stop ends the ticker, the log routing and the signal guard. Called with mu
-// held: a tick waiting on mu finds the region stopped and paints nothing.
+// holdStdout points os.Stdout at a pipe whose reader prints every complete
+// line above the region onto the real terminal. A program that writes to
+// stdout from goroutines still running at Done races the swap back; finish
+// them first.
+func (r *Region) holdStdout() {
+	rd, wr, err := os.Pipe()
+	Check(err)
+	r.stdout, r.pipe, r.drained = os.Stdout, wr, make(chan struct{})
+	os.Stdout = wr
+	go func() {
+		defer close(r.drained)
+		var pending []byte
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := rd.Read(buf)
+			pending = append(pending, buf[:n]...)
+			if i := bytes.LastIndexByte(pending, '\n'); i >= 0 {
+				r.above(r.stdout, string(pending[:i+1]))
+				pending = append(pending[:0], pending[i+1:]...)
+			}
+			if err != nil {
+				if len(pending) > 0 {
+					r.above(r.stdout, string(pending)+"\n")
+				}
+				_ = rd.Close()
+				return
+			}
+		}
+	}()
+}
+
+// releaseStdout gives os.Stdout back and waits until every line written
+// before it has printed. Called without mu: the reader needs it.
+func (r *Region) releaseStdout() {
+	if r.pipe == nil {
+		return
+	}
+	os.Stdout = r.stdout
+	_ = r.pipe.Close()
+	<-r.drained
+	r.pipe = nil
+}
+
+// stop ends the ticker and the log routing. Called with mu held: a tick
+// waiting on mu finds the region stopped and paints nothing.
 func (r *Region) stop() {
 	Assert(!r.stopped, "live region already stopped")
 	r.stopped = true
@@ -208,9 +255,6 @@ func (r *Region) stop() {
 		return
 	}
 	r.restoreLog()
-	if r.sigs != nil {
-		signal.Stop(r.sigs)
-	}
 	active.Store(nil)
 }
 
@@ -225,24 +269,6 @@ func (r *Region) tick(every time.Duration, fn func()) {
 			case <-t.C:
 				fn()
 			}
-		}
-	}()
-}
-
-// guardSignals restores the cursor on SIGINT/SIGTERM, then lets the signal do
-// what it would have done without us: stop listening and raise it again.
-func (r *Region) guardSignals() {
-	r.sigs = make(chan os.Signal, 1)
-	signal.Notify(r.sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		select {
-		case <-r.quit:
-		case sig := <-r.sigs:
-			r.mu.Lock()
-			r.write("\n" + showCursor)
-			signal.Stop(r.sigs)
-			r.mu.Unlock()
-			_ = syscall.Kill(os.Getpid(), sig.(syscall.Signal))
 		}
 	}()
 }
