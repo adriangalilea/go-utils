@@ -3,93 +3,40 @@ package utils
 import (
 	"fmt"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	boldStyle    = lipgloss.NewStyle().Bold(true)
-	redStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	greenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	yellowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	blueStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	magentaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	cyanStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	grayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	"github.com/adriangalilea/go-utils/internal/ansi"
 )
 
 type formatOps struct {
-	colorEnabled bool
-
 	Currency formatCurrencyOps
 }
 
-// Format returns styled strings without printing, for TUI views (Bubbletea)
-// and CLI output: colours, money, percentages, byte counts, currencies.
+// Format returns styled strings without printing, for TUI views and CLI
+// output: colours, money, percentages, byte counts, currencies. Colour is the
+// module's one decision (the same as package cli): both stdout and stderr
+// terminals, NO_COLOR / TERM=dumb / FORCE_COLOR override.
 var Format = &formatOps{}
 
-func init() {
-	Format.colorEnabled = shouldEnableColor()
-}
+func (f *formatOps) Bold(text string) string    { return ansi.Paint(ansi.Bold, text) }
+func (f *formatOps) Red(text string) string     { return ansi.Paint(ansi.Red, text) }
+func (f *formatOps) Green(text string) string   { return ansi.Paint(ansi.Green, text) }
+func (f *formatOps) Yellow(text string) string  { return ansi.Paint(ansi.Yellow, text) }
+func (f *formatOps) Blue(text string) string    { return ansi.Paint(ansi.Blue, text) }
+func (f *formatOps) Magenta(text string) string { return ansi.Paint(ansi.Magenta, text) }
+func (f *formatOps) Cyan(text string) string    { return ansi.Paint(ansi.Cyan, text) }
+func (f *formatOps) Gray(text string) string    { return ansi.Paint(ansi.Gray, text) }
 
-// NO_COLOR and FORCE_COLOR env vars override; lipgloss handles terminal detection.
-func shouldEnableColor() bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	if os.Getenv("FORCE_COLOR") != "" {
-		return true
-	}
-	return true
-}
-
-func (f *formatOps) Bold(text string) string {
-	return boldStyle.Render(text)
-}
-
-func (f *formatOps) Red(text string) string {
-	return redStyle.Render(text)
-}
-
-func (f *formatOps) Green(text string) string {
-	return greenStyle.Render(text)
-}
-
-func (f *formatOps) Yellow(text string) string {
-	return yellowStyle.Render(text)
-}
-
-func (f *formatOps) Blue(text string) string {
-	return blueStyle.Render(text)
-}
-
-func (f *formatOps) Magenta(text string) string {
-	return magentaStyle.Render(text)
-}
-
-func (f *formatOps) Cyan(text string) string {
-	return cyanStyle.Render(text)
-}
-
-func (f *formatOps) Gray(text string) string {
-	return grayStyle.Render(text)
-}
-
-// Green positive, red negative, gray zero. Respects color detection.
+// Green positive, red negative, gray zero.
 func signColored(value float64, s string) string {
-	if !Format.colorEnabled {
-		return s
+	switch {
+	case value > 0:
+		return ansi.Paint(ansi.Green, s)
+	case value < 0:
+		return ansi.Paint(ansi.Red, s)
 	}
-	if value > 0 {
-		return greenStyle.Render(s)
-	}
-	if value < 0 {
-		return redStyle.Render(s)
-	}
-	return grayStyle.Render(s)
+	return ansi.Paint(ansi.Gray, s)
 }
 
 // "1234567.89" -> "1,234,567.89". Sign prefixes pass through untouched.

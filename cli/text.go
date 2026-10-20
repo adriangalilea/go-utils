@@ -3,11 +3,11 @@
 // blocks, and a live region that repaints in place (spinner, progress bar,
 // elapsed time) with log events printed above it.
 //
-// Everything returns strings; only a live region writes. Colour is one
-// decision for the whole process: both stdout and stderr must be terminals
-// (static output goes to stdout, live regions to stderr, and any redirection
-// means some string may land in a file), NO_COLOR, TERM=dumb and FORCE_COLOR
-// override.
+// Everything returns strings; only a live region writes. Colour is the
+// module's one decision, shared with Format: both stdout and stderr must be
+// terminals (static output goes to stdout, live regions to stderr, and any
+// redirection means some string may land in a file), NO_COLOR, TERM=dumb and
+// FORCE_COLOR override.
 //
 //	fmt.Println(cli.Table([][]string{
 //		{"das", cli.UI.Ok("ejected")},
@@ -16,49 +16,32 @@
 package cli
 
 import (
-	"os"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/term"
+	"github.com/adriangalilea/go-utils/internal/ansi"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
-const reset = "\x1b[0m"
+const reset = ansi.Reset
 
 // Colour reports whether this process paints (see the package doc).
-var Colour = colourAsked(os.Getenv("FORCE_COLOR"), os.Getenv("NO_COLOR"), os.Getenv("TERM"),
-	term.IsTerminal(os.Stdout.Fd()) && term.IsTerminal(os.Stderr.Fd()))
-
-func colourAsked(force, no, termName string, ttys bool) bool {
-	if force != "" {
-		return force != "0" && force != "false"
-	}
-	if no != "" || termName == "dumb" {
-		return false
-	}
-	return ttys
-}
+func Colour() bool { return ansi.Enabled }
 
 // Style paints a string, or returns it as is when the process does not colour.
 type Style func(string) string
 
 func paint(open string) Style {
-	return func(s string) string {
-		if !Colour || s == "" {
-			return s
-		}
-		return open + s + reset
-	}
+	return func(s string) string { return ansi.Paint(open, s) }
 }
 
 var (
-	Bold   = paint("\x1b[1m")
-	Dim    = paint("\x1b[2m")
-	Red    = paint("\x1b[31m")
-	Green  = paint("\x1b[32m")
-	Yellow = paint("\x1b[33m")
-	Cyan   = paint("\x1b[36m")
-	Gray   = paint("\x1b[90m")
+	Bold   = paint(ansi.Bold)
+	Dim    = paint(ansi.Dim)
+	Red    = paint(ansi.Red)
+	Green  = paint(ansi.Green)
+	Yellow = paint(ansi.Yellow)
+	Cyan   = paint(ansi.Cyan)
+	Gray   = paint(ansi.Gray)
 )
 
 // UI is the semantic palette, the same roles as ts-utils' ui: use these, not
@@ -78,15 +61,15 @@ var UI = struct {
 // Link is text linked to url (OSC 8) where this process colours: clickable in
 // a terminal that knows hyperlinks, the words alone everywhere else.
 func Link(text, url string) string {
-	if !Colour {
+	if !ansi.Enabled {
 		return text
 	}
-	return ansi.SetHyperlink(url) + text + ansi.ResetHyperlink()
+	return xansi.SetHyperlink(url) + text + xansi.ResetHyperlink()
 }
 
 // Width is the visible width in terminal cells: escapes stripped, grapheme
 // clusters measured (a wide character or an emoji takes two).
-func Width(s string) int { return ansi.StringWidth(s) }
+func Width(s string) int { return xansi.StringWidth(s) }
 
 // Clip truncates to n visible cells with an ellipsis at the cut. Escapes pass
 // through, and a style left open by the cut is closed.
@@ -94,7 +77,7 @@ func Clip(s string, n int) string {
 	if Width(s) <= n {
 		return s
 	}
-	c := ansi.Truncate(s, n, "…")
+	c := xansi.Truncate(s, n, "…")
 	if strings.Contains(c, "\x1b[") && !strings.HasSuffix(c, reset) {
 		c += reset
 	}

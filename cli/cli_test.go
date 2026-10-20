@@ -6,13 +6,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/adriangalilea/go-utils/internal/ansi"
 )
 
 func withColour(t *testing.T, on bool) {
 	t.Helper()
-	was := Colour
-	Colour = on
-	t.Cleanup(func() { Colour = was })
+	was := ansi.Enabled
+	ansi.Enabled = on
+	t.Cleanup(func() { ansi.Enabled = was })
 }
 
 func TestColourAsked(t *testing.T) {
@@ -28,8 +30,8 @@ func TestColourAsked(t *testing.T) {
 		{"0", "", "xterm", true, false},
 		{"false", "", "xterm", true, false},
 	} {
-		if got := colourAsked(c.force, c.no, c.term, c.ttys); got != c.want {
-			t.Errorf("colourAsked(%q, %q, %q, %v) = %v, want %v", c.force, c.no, c.term, c.ttys, got, c.want)
+		if got := ansi.Asked(c.force, c.no, c.term, c.ttys); got != c.want {
+			t.Errorf("ansi.Asked(%q, %q, %q, %v) = %v, want %v", c.force, c.no, c.term, c.ttys, got, c.want)
 		}
 	}
 }
