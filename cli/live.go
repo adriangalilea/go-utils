@@ -46,15 +46,20 @@ type LiveOpts struct {
 // Table, KV, Bar and Spin compose into.
 //
 // Nothing else can tear it while it is up: log events (Log.*) print above it,
-// so does Print, and so does anything written to stdout (fmt.Println
-// included) when stdout is the same terminal — the region holds os.Stdout for
-// its lifetime and prints each line above itself. Stdout redirected to a file
-// or a pipe is left alone: that is data.
+// so does Print, and so does anything written to os.Stdout or os.Stderr
+// (fmt.Println, a library's own warnings) while that stream is a terminal —
+// the region holds each for its lifetime and prints every line above itself.
+// A stream redirected to a file or a pipe is left alone: that is data. A
+// write that lands after Done goes straight to the terminal, which is where
+// it belongs once the region is gone; only bytes written to the raw fd (the
+// runtime's panic trace, a child process handed the fd) bypass the hold.
 //
-// The region never touches signals and never hides the cursor, so Ctrl-C is
-// whatever the program makes of it and leaves the terminal as it was, the
-// last frame on screen. A program that handles the signal ends the region
-// with Done or Clear on its way out.
+// The region never touches signals and never hides the cursor. Go cannot
+// tell whether the program has its own Ctrl-C handling (ts-utils can, in
+// Node, and so hides it there), and a hidden cursor needs a handler to bring
+// it back. So Ctrl-C is whatever the program makes of it and leaves the
+// terminal as it was, the last frame on screen. A program that handles the
+// signal ends the region with Done or Clear on its way out.
 //
 // Off a terminal nothing repaints: Print prints, Done prints the final frame
 // once, Heartbeat prints snapshots. The same calling code serves both.
@@ -70,9 +75,15 @@ type Region struct {
 	stopped    bool
 	quit       chan struct{}
 	restoreLog func()
-	// While stdout is held: the terminal it was, the pipe it is, and the
-	// reader that prints each line above the region.
-	stdout  *os.File
+	held       []*held
+}
+
+// held is one stream the region holds: the variable (os.Stdout, os.Stderr),
+// the terminal it was, the pipe it is, and the reader that prints each line
+// above the region.
+type held struct {
+	slot    **os.File
+	term    *os.File
 	pipe    *os.File
 	drained chan struct{}
 }
@@ -97,8 +108,10 @@ func Live(render func() string, o LiveOpts) *Region {
 	}
 	Assert(active.CompareAndSwap(nil, r), "one live region at a time — compose into a single render")
 	r.restoreLog = LogThrough(aboveWriter{r})
-	if term.IsTerminal(os.Stdout.Fd()) {
-		r.holdStdout()
+	for _, slot := range []**os.File{&os.Stdout, &os.Stderr} {
+		if term.IsTerminal((*slot).Fd()) {
+			r.hold(slot)
+		}
 	}
 	r.Refresh()
 	fps := cmp.Or(o.FPS, 12.5)
@@ -134,7 +147,7 @@ func (r *Region) Done() { r.DoneWith("") }
 // DoneWith stops the region and leaves frame in the scrollback in its place
 // ("" = the current frame).
 func (r *Region) DoneWith(frame string) {
-	r.releaseStdout()
+	r.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if frame == "" {
@@ -150,7 +163,7 @@ func (r *Region) DoneWith(frame string) {
 
 // Clear stops the region and removes it from the screen.
 func (r *Region) Clear() {
-	r.releaseStdout()
+	r.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stop()
@@ -179,8 +192,8 @@ func (r *Region) paint() {
 }
 
 // above erases the region, writes text to dst, and repaints underneath it, in
-// one synchronized update. dst is the region's stream or the held stdout:
-// both are the same terminal, written in order.
+// one synchronized update. dst is the region's stream or a held stream's
+// terminal: the same screen, written in order.
 func (r *Region) above(dst *os.File, text string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -202,29 +215,29 @@ func (w aboveWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// holdStdout points os.Stdout at a pipe whose reader prints every complete
-// line above the region onto the real terminal. A program that writes to
-// stdout from goroutines still running at Done races the swap back; finish
-// them first.
-func (r *Region) holdStdout() {
+// hold points *slot at a pipe whose reader prints every complete line above
+// the region onto the terminal *slot was. A line written in pieces prints
+// whole; a last line with no newline prints at release.
+func (r *Region) hold(slot **os.File) {
 	rd, wr, err := os.Pipe()
 	Check(err)
-	r.stdout, r.pipe, r.drained = os.Stdout, wr, make(chan struct{})
-	os.Stdout = wr
+	h := &held{slot: slot, term: *slot, pipe: wr, drained: make(chan struct{})}
+	*slot = wr
+	r.held = append(r.held, h)
 	go func() {
-		defer close(r.drained)
+		defer close(h.drained)
 		var pending []byte
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := rd.Read(buf)
 			pending = append(pending, buf[:n]...)
 			if i := bytes.LastIndexByte(pending, '\n'); i >= 0 {
-				r.above(r.stdout, string(pending[:i+1]))
+				r.above(h.term, string(pending[:i+1]))
 				pending = append(pending[:0], pending[i+1:]...)
 			}
 			if err != nil {
 				if len(pending) > 0 {
-					r.above(r.stdout, string(pending)+"\n")
+					r.above(h.term, string(pending)+"\n")
 				}
 				_ = rd.Close()
 				return
@@ -233,16 +246,15 @@ func (r *Region) holdStdout() {
 	}()
 }
 
-// releaseStdout gives os.Stdout back and waits until every line written
-// before it has printed. Called without mu: the reader needs it.
-func (r *Region) releaseStdout() {
-	if r.pipe == nil {
-		return
+// release gives every held stream back and waits until each line written
+// before it has printed. Called without mu: the readers need it.
+func (r *Region) release() {
+	for _, h := range r.held {
+		*h.slot = h.term
+		_ = h.pipe.Close()
+		<-h.drained
 	}
-	os.Stdout = r.stdout
-	_ = r.pipe.Close()
-	<-r.drained
-	r.pipe = nil
+	r.held = nil
 }
 
 // stop ends the ticker and the log routing. Called with mu held: a tick

@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/charmbracelet/x/term v0.2.1
+	github.com/creack/pty v1.1.24
 	github.com/spf13/cobra v1.10.1
 )
 
