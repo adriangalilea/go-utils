@@ -34,6 +34,67 @@ func Bar(done, total int64, width int, style Style) string {
 	return style(strings.Repeat("█", fill)) + Dim(strings.Repeat("░", width-fill))
 }
 
+// Rate measures a running count (bytes, items) per second over a moving
+// window, so a stall reads as a falling speed instead of a frozen one. Feed it
+// the running total with Add; read PerSecond in render. The zero value is
+// ready (a 5 s window) and safe across goroutines.
+type Rate struct {
+	Window  time.Duration // 0 = 5 s
+	mu      sync.Mutex
+	samples []rateSample
+}
+
+type rateSample struct {
+	at    time.Time
+	total int64
+}
+
+// Add records the running total now. A total below the last one is a restart
+// from zero (a download the server sent again from the start): the window
+// begins again.
+func (r *Rate) Add(total int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if n := len(r.samples); n > 0 && total < r.samples[n-1].total {
+		r.samples = r.samples[:0]
+	}
+	r.samples = append(r.samples, rateSample{now, total})
+	window := r.Window
+	if window == 0 {
+		window = 5 * time.Second
+	}
+	cut := 0
+	for cut < len(r.samples)-1 && now.Sub(r.samples[cut].at) > window {
+		cut++
+	}
+	r.samples = r.samples[cut:]
+}
+
+// PerSecond is the count per second across the window, measured to now
+// rather than to the last sample: silence pulls it down.
+func (r *Rate) PerSecond() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.samples) < 2 {
+		return 0
+	}
+	first, last := r.samples[0], r.samples[len(r.samples)-1]
+	dt := time.Since(first.at).Seconds()
+	if dt <= 0 {
+		return 0
+	}
+	return float64(last.total-first.total) / dt
+}
+
+// ETA is how long `left` takes at perSecond (0 when the speed is unknown).
+func ETA(left int64, perSecond float64) time.Duration {
+	if left <= 0 || perSecond < 1 {
+		return 0
+	}
+	return time.Duration(float64(left) / perSecond * float64(time.Second))
+}
+
 // Elapsed is the time since `since`, compact: 0.4s · 12s · 1m05s · 1h02m.
 func Elapsed(since time.Time) string { return Duration(time.Since(since)) }
 

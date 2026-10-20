@@ -111,6 +111,25 @@ func TestDuration(t *testing.T) {
 	}
 }
 
+func TestRate(t *testing.T) {
+	var r Rate
+	now := time.Now()
+	r.samples = []rateSample{{now.Add(-2 * time.Second), 0}, {now, 20 << 20}}
+	if s := r.PerSecond(); s < 9<<20 || s > 11<<20 {
+		t.Fatalf("20 MB in 2s read as %.0f B/s", s)
+	}
+	r.Add(5) // below the last total: a restart, the window begins again
+	if s := r.PerSecond(); s != 0 {
+		t.Fatalf("one sample after a restart reads %.0f B/s, want 0", s)
+	}
+	if got := ETA(100, 10); got != 10*time.Second {
+		t.Fatalf("ETA(100, 10) = %v", got)
+	}
+	if got := ETA(100, 0); got != 0 {
+		t.Fatalf("ETA at an unknown speed = %v, want 0", got)
+	}
+}
+
 // Off a terminal a region repaints nothing: Print prints, Done prints the
 // final frame once.
 func TestRegionOffTerminal(t *testing.T) {
