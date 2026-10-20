@@ -68,6 +68,14 @@ results := pq.Process(ctx, 5, handler)
 pq.TryEnqueue("critical", work, true)      // Priority queue
 pq.TryEnqueue("normal", work, false)       // Normal queue
 pq.TryEnqueue("retry", work, true, failures)  // With linear backoff (skip 'failures' times)
+
+// Terminal presentation (package cli, the twin of @adriangalilea/utils/cli)
+fmt.Println(cli.Table(rows, cli.TableOpts{Head: []string{"name", "state"}})) // aligned, colour-aware
+cli.UI.Ok("ejected"); cli.UI.Warn("draining"); cli.UI.Muted("8s")            // one palette, off in pipes and under NO_COLOR
+r := cli.Live(func() string { return cli.Spin() + " copying " + cli.Bar(done, total, 24, nil) }, cli.LiveOpts{})
+r.Print("one file done")    // prints above the region; Log.* events do too
+r.DoneWith("✓ copied")      // leaves the final line; off a terminal only this prints
+cli.Spinner("checking", func(set func(string)) error { return check() })     // ✓ checking 1.2s
 ```
 
 Part of the utils suite by Adrian Galilea: **go-utils**, **[ts-utils](https://github.com/adriangalilea/ts-utils)**, **[py-utils](https://github.com/adriangalilea/py-utils)**. The logging contract the three share, and the harness that proves they write the same event stream byte for byte, live in **[utils](https://github.com/adriangalilea/utils)**.
@@ -175,6 +183,8 @@ func main() {
 ```
 
 A batch is lines joined by `\n`, `Content-Type: text/plain;charset=utf-8`, at most 64 KB and 50 events, with `LOG_SHIP_TOKEN` as `Authorization: Bearer`. It leaves 2s after its first event, at 50 events, and when a span opened outside any span of this process ends (a root span, or a request joined from its caller: its whole trace leaves together). `FlushLog()` sends what waits and returns once no batch is in flight; call it before `main` returns or `os.Exit`. Shipping never blocks a write and never panics: a refused or lost batch is one `WarnOnce` under scope `ship` (no retry), an event over 64 KB stays on stderr and warns once. A malformed `LOG_SHIP` panics. The wire and the collector's answers are the contract's, in [utils](https://github.com/adriangalilea/utils#shipping).
+
+[**cli/**](cli): terminal presentation, the twin of ts-utils' `cli`. A semantic palette (`UI.Head/Accent/Muted/Ok/Warn/Bad/Ref`) decided once per process (stdout and stderr both terminals; `NO_COLOR`, `TERM=dumb`, `FORCE_COLOR` override), ANSI-aware `Width`/`Clip`/`PadEnd`, `Table` and `KV`, and `Live`: a block pinned at the bottom of the terminal, repainted from a render function, with log events and `Print` lines written above it (`LogThrough` in logger.go is the seam). Off a terminal nothing repaints and only final frames print. Widgets `Spin`, `Bar`, `Elapsed`, `Duration`, and the `Spinner` one-liner.
 
 [**currencies.go**](currencies.go): Currency namespace with intelligent decimal formatting, Unicode symbols (₿, Ξ, €, etc.), percentage calculations, and currency type detection. Optimized for crypto trading with BTC/ETH precision handling.
 

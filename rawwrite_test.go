@@ -19,6 +19,8 @@ var rawWriteAllowed = map[string]string{
 	"logger.go:out":       "the sink: its writer is stderr, the one place events are written",
 	"logger.go:stderrTTY": "the sink chooses human or json by whether stderr is a terminal",
 	"kev.go:Dump":         "data on stdout: Dump prints the environment as namespace:KEY=value, the output it is called for",
+	"cli/live.go:Live":    "a live region is terminal UI on stderr, not an event; log events print above it through LogThrough",
+	"cli/text.go:Colour":  "the colour decision reads whether stdout and stderr are terminals; nothing is written",
 }
 
 // TestNoRawWrites refuses library code that prints by itself: fmt.Print*,
